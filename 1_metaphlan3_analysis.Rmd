@@ -1,0 +1,736 @@
+---
+title: "Preparation of MetaPhlAn dataset and transformation of data"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+# Load in the packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(phyloseq)
+library(vegan)
+library(zCompositions)
+library(rgr)
+library(NBZIMM)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+
+```
+
+# Transform MetaPhlAn output into a phloseq object
+
+Function for transforming MetaPhlAn output into a phyloseq object:
+```{r}
+metaphlanToPhyloseq <- function(
+  tax,
+  metadat=NULL,
+  simplenames=TRUE,
+  roundtointeger=FALSE,
+  split="|"){
+  ## tax is a matrix or data.frame with the table of taxonomic abundances, rows are taxa, columns are samples
+  ## metadat is an optional data.frame of specimen metadata, rows are samples, columns are variables
+  ## if simplenames=TRUE, use only the most detailed level of taxa names in the final object
+  ## if roundtointeger=TRUE, values will be rounded to the nearest integer
+  xnames = rownames(tax)
+  shortnames = gsub(paste0(".+\\", split), "", xnames)
+  if(simplenames){
+    rownames(tax) = shortnames
+  }
+  if(roundtointeger){
+    tax = round(tax * 1e4)
+  }
+  x2 = strsplit(xnames, split=split, fixed=TRUE)
+  taxmat = matrix(NA, ncol=max(sapply(x2, length)), nrow=length(x2))
+  colnames(taxmat) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "Strain")[1:ncol(taxmat)]
+  rownames(taxmat) = rownames(tax)
+  for (i in 1:nrow(taxmat)){
+    taxmat[i, 1:length(x2[[i]])] <- x2[[i]]
+  }
+  taxmat = gsub("[a-z]__", "", taxmat)
+  taxmat = phyloseq::tax_table(taxmat)
+  otutab = phyloseq::otu_table(tax, taxa_are_rows=TRUE)
+  if(is.null(metadat)){
+    res = phyloseq::phyloseq(taxmat, otutab)
+  }else{
+    res = phyloseq::phyloseq(taxmat, otutab, phyloseq::sample_data(metadat))
+  }
+  return(res)
+}
+```
+
+Read in the metadata: 
+```{r echo=T, message=F, error=F, warning=F}
+meta <-  read_delim(file = paste0(path, "metadata/Tilpasset_metadata.txt"), col_names = T, delim= "\t")
+meta <- as_tibble(meta)
+```
+
+```{r}
+dim(meta)
+
+#Calculate BMI
+meta <- meta %>% mutate(BMI = weight/(height/100)^2)
+
+#Make column with categorical clinical disease score
+meta <- meta %>% mutate(score_p = ifelse(pucai_current < 10, "remission", ifelse(pucai_current <= 34, "mild", ifelse(pucai_current<=64, "moderate", ifelse(pucai_current>64, "severe", "NA")))))
+
+meta <- meta %>% mutate(score_s = ifelse(sccai_current<3, "remission", ifelse(sccai_current<=5, "mild", ifelse(sccai_current<=11, "moderate", ifelse(sccai_current>11, "severe", "NA")))))
+
+meta <- meta %>% mutate(score = ifelse(is.na(score_p), score_s, ifelse(is.na(score_s), score_p, "NA")))
+
+#Make discrete numeric disease score:
+meta$score_num <- ifelse(meta$score =="remission", 1, ifelse(meta$score=="mild", 2, ifelse(meta$score=="moderate",3, 4)))
+
+#Make binary disease scores:
+meta$score <- factor(meta$score, levels = c("remission", "mild", "moderate", "severe"))
+meta$score_binary <- as.factor(ifelse(meta$score == "remission", 0, 1))
+
+meta$fcal_binary <- as.factor(ifelse(meta$f_cal_current < 250, 0, 1))
+
+#Make merged treatment column for 5-ASA and prednisolone:
+meta$pred_total <- ifelse(meta$pred==1 | meta$l_pred ==1, 1, 0)
+meta$asa_total <- ifelse(meta$asa==1 | meta$l_asa ==1, 1, 0)
+```
+
+```{r echo=T, message=F, error=F, warning=F}
+#Read in the total read depth and add to meta data:
+qc_stats <-  read_delim(file = paste0(path, "../analysis/summary_stats_of_QC.txt"), col_names = T, delim= "\t")
+qc_stats$rdepth <- as.numeric(gsub(",", "", qc_stats$clean_R1))*2
+qc_stats <- qc_stats %>% dplyr::select(J_ID, rdepth)
+meta <- merge(meta, qc_stats, by.x="J_ID", by.y="J_ID")
+
+#Save meta data:
+write.table(meta, paste0(path, "metadata/", "preped_metadata.txt"), row.names = F, sep="\t")
+
+#Prepare for phyloseq
+meta <- as.data.frame(meta)
+rownames(meta) = meta$J_ID
+```
+
+Investigate summary statistics of meta data:
+```{r}
+meta_total <- read.table(paste0(path, "metadata/", "metadata_excel_new.txt"), sep="\t", header = T)
+meta_total$BMI <-  meta_total$weight/(meta_total$height/100)^2
+
+#Total number of patients:
+dim(meta_total)
+
+#Total number of children and adults
+adults <- meta_total %>% filter(age_gr == 2)
+children <- meta_total %>% filter(age_gr == 1)
+dim(adults)
+dim(children)
+
+#Split by gender:
+dim(children %>% filter(sex==0))
+dim(children %>% filter(sex==1))
+dim(adults %>% filter(sex==0))
+dim(adults %>% filter(sex==1))
+
+#Study group:
+dim(children %>% filter(study_gr==1))
+dim(children %>% filter(study_gr==2))
+dim(adults %>% filter(study_gr==1))
+dim(adults %>% filter(study_gr==2))
+
+#BMI:
+summary(children$BMI)
+summary(adults$BMI)
+
+#Treatment before baseline:
+dim(children %>% filter(asa_0 == 1))
+dim(adults %>% filter(asa_0 == 1))
+
+dim(children %>% filter(pred_0 == 1))
+dim(adults %>% filter(pred_0 == 1))
+
+dim(children %>% filter(aza_0 == 1))
+dim(adults %>% filter(aza_0 == 1))
+
+dim(children %>% filter(bio_0 == 1))
+dim(adults %>% filter(bio_0 == 1))
+
+dim(children %>% filter(l_asa_0 == 1))
+dim(adults %>% filter(l_asa_0 == 1))
+
+dim(children %>% filter(l_pred_0 == 1))
+dim(adults %>% filter(l_pred_0 == 1))
+
+dim(children %>% filter(asa_0 ==0 &pred_0 == 0 &aza_0 == 0 &bio_0 == 0 &l_asa_0 == 0 & l_pred_0 == 0))
+dim(adults %>% filter(asa_0 ==0 &pred_0 == 0 &aza_0 == 0 &bio_0 == 0 &l_asa_0 == 0 & l_pred_0 == 0))
+
+```
+
+
+Read in the MetaPhlan count data and transform it into phyloseq object:
+```{r}
+#Count data
+bug_count <- read.csv(paste0(path, "humann3_processed_output/Joined_tables/", "Joined_metaphlan_bugs_list_counts.tsv"), sep = "\t", strip.white = T, stringsAsFactors = F, row.names = 1)
+
+#Change J-ID
+colnames(bug_count) <- substr(colnames(bug_count), start = 1, stop = 6)
+
+#Subtract species level to include in phyloseq
+level.letter = 's'
+species_count = as.data.frame(matrix(nrow=0, ncol=ncol(bug_count)))
+
+colnames(species_count) <- colnames(bug_count)
+  
+mph.names = rownames(bug_count)
+    
+for (i in 1:length(mph.names)){
+    A = unlist(strsplit(mph.names[i], "|", fixed=TRUE))
+    mph.genera.full = A[length(A)]
+    B = unlist(strsplit(A[length(A)], "_", fixed=TRUE))
+    if (B[1] == level.letter){
+      #print(mph.names[i])
+      species_count[mph.names[i],] = bug_count[mph.names[i],]
+      }
+    }
+
+#Change setup of table
+ps_count <- metaphlanToPhyloseq(species_count, metadat=meta)
+otu_table(ps_count)[1:5,10:14]
+tax_table(ps_count)[1:2,]
+ps_count #208 samples, 550 taxa
+
+#Save phyloseq object
+saveRDS(ps_count, paste0(path, "humann3_processed_output/Phyloseq/","ps_count.rds"))
+
+```
+
+Read in relative abundance MetaPhlan data and transform it into phyloseq object, like what was done with the count data:
+```{r}
+#Relative abundance data
+bug_relab <- read.csv(paste0(path, "humann3_processed_output/Joined_tables/", "Joined_metaphlan_bugs_list_relab.tsv"), sep = "\t", strip.white = T, stringsAsFactors = F, row.names = 1) 
+
+#Change J-ID and save UNKNOWN abundance
+colnames(bug_relab) <- substr(colnames(bug_relab), start = 1, stop = 6)
+relab_unknown <- bug_relab[1,]
+
+#Subtract species level to include in phyloseq
+level.letter = 's'
+species_relab = as.data.frame(matrix(nrow=0, ncol=ncol(bug_relab)))
+colnames(species_relab) <- colnames(bug_relab)
+    
+mph.names = rownames(bug_relab)
+for (i in 1:length(mph.names)){
+    A = unlist(strsplit(mph.names[i], "|", fixed=TRUE))
+    mph.genera.full = A[length(A)]
+    B = unlist(strsplit(A[length(A)], "_", fixed=TRUE))
+    if (B[1] == level.letter){
+      #print(mph.names[i])
+      species_relab[mph.names[i],] = bug_relab[mph.names[i],]
+    }
+  }
+dim(species_relab)
+
+#This does not summarise to 100, because unmapped are subtracted from the data frame:
+colSums(species_relab)[1:10]
+
+#Change setup of table
+ps_relab <- metaphlanToPhyloseq(species_relab, metadat = meta)
+otu_table(ps_relab)[1:5,10:14]
+tax_table(ps_relab)[1:2,]
+ps_relab #208 samples, 550 taxa
+
+#Save phyloseq object
+saveRDS(ps_relab, paste0(path, "humann3_processed_output/Phyloseq/","ps_relab.rds"))
+```
+
+# Quality control based on read depth
+
+Remove samples, if the have a read depth below 10,000 reads:
+```{r}
+#Histogram of sequencing depth
+ggplot()+
+  geom_histogram(mapping=aes(sample_sums(ps_count)), fill = "lightskyblue1", color="black", bins = 100)+
+  theme_classic()+xlab("Read depth")+ylab("Count")+
+  geom_vline(xintercept = 10000, linetype = "dashed")
+    
+min(sample_sums(ps_count))
+#Remove sample with read depth below 10,000:
+ps_sub = prune_samples(sample_sums(ps_count)>=10000, ps_count)
+ps_sub #207 samples - one was removed
+
+saveRDS(ps_sub, paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+
+#Which sample was removed? It should also be removed in the dataset with relative abundance:
+removed <- setdiff(sample_names(ps_count), sample_names((ps_sub)))
+removed #J28550
+ps_relab_sub <- subset_samples(ps_relab, !(J_ID %in% removed))
+ps_relab_sub #207 samples and 550 taxa
+    
+saveRDS(ps_relab_sub,paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
+
+```
+
+```{r}
+meta$age_gr1 <- ifelse(meta$age_gr==1, "Children", "Adults")
+meta$age_gr1 <- factor(meta$age_gr1, levels=c("Children", "Adults"))
+ggplot(data=meta, aes(x=as.factor(time_point), fill=age_gr1))+
+  geom_bar(position = "stack")+theme_classic()+xlab("Time point")+ylab("Samples")+labs(fill="Age group")
+ggplot(data=meta, aes(x=as.factor(time_point)))+
+  geom_bar(position = "stack")+theme_classic()+xlab("Time point")+ylab("Samples")+labs(fill="Age group")
+```
+
+
+
+# Inspection of data using stacked barplots
+
+Make stacked barplots to inspect the data. Normally, the abundance in the plots will summarise to 100. But in this setup, I have not excluded the propotion of unmapped reads. Therefore, the stacked bar plots look different than usual.
+```{r}
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_filtered.rds"))
+
+#Based on Kingdom (bacteria/eukaryote/archae)
+temp_1 <- ps_relab %>% tax_glom(taxrank = "Kingdom") %>% psmelt()
+
+ggplot(temp_1)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Kingdom), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())
+
+#Based on Phylum
+tax_level <- "Phylum"
+temp <- ps_relab %>% tax_glom(taxrank = tax_level) %>% psmelt() %>% filter(Abundance > 2)
+
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())
+
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
+
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
+
+
+#Based on Class:
+temp <- ps_relab %>% tax_glom(taxrank = "Class") %>% psmelt() %>% filter(Abundance > 2)
+
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
+
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
+
+#Based on Order:
+temp <- ps_relab %>% tax_glom(taxrank = "Order") %>% psmelt() %>% filter(Abundance > 2)
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Order), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Order), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
+
+#Based on Family:
+temp <- ps_relab %>% tax_glom(taxrank = "Family") %>% psmelt() %>% filter(Abundance > 2)
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Family), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Family), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
+```
+
+For Genus and Species plots, the legend is not shown, is it would be too large:
+```{r}
+
+#Based on Genus:
+temp <- ps_relab %>% tax_glom(taxrank = "Genus") %>% psmelt() %>% filter(Abundance > 2)
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Genus), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")+theme(legend.position = "none")
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Genus), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")+theme(legend.position = "none")
+
+#Based on Species:
+temp <- ps_relab %>% tax_glom(taxrank = "Species") %>% psmelt() %>% filter(Abundance > 2)
+#Divided into sex:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Species), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")+theme(legend.position = "none")
+#Divided by age group:
+ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Species), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")+theme(legend.position = "none")
+
+```
+
+# Calculation of alpha diversity
+
+Calculate alpha diversity using phyloseq package:
+```{r warning=FALSE}
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+
+#Calculate alpha div based on counts
+alpha_div <-estimate_richness(ps_count, measures=c("Chao1", "Shannon", "InvSimpson", "Observed"))
+head(alpha_div)
+
+#Create matrix
+alpha_div$J_ID <- row.names(alpha_div)
+
+# Save alpha diversity
+write.table(alpha_div, paste0(path, "humann3_processed_output/processed_tables/",'AlphaDiv.txt'), col.names = T, row.names = F, quote = F, sep = '\t')
+
+```
+
+
+Calculate alpha diversity based on relative abundance and investigate the correlation:
+```{r}
+matrix_spec <- t(otu_table(ps_relab))
+div_shannon_003 <- diversity(matrix_spec, index="shannon")  ### Shannon entropy
+div_simpson_003 <- diversity(matrix_spec, index="simpson")  ### Simpson Diversity - It is less sensitive to rare species than the Shannon-Wiener Index
+div_invsimpson_003 <- diversity(matrix_spec, index="inv")   ### inverse Simpson Diversity
+spec_nr_003 <- specnumber(matrix_spec,MARGIN=1)             ### Species number (observed)
+
+alpha_div_relab <- as.data.frame(cbind(spec_nr_003,div_shannon_003, div_invsimpson_003))
+alpha_div_relab$J_ID <- row.names(alpha_div_relab)
+
+# Save alpha diversity
+write.table(alpha_div_relab, paste0(path, "humann3_processed_output/processed_tables/",'AlphaDiv_relab.txt'), col.names = T, row.names = F, quote = F, sep = '\t')
+
+
+# Compare the two methods
+alpha_total <- merge(alpha_div, alpha_div_relab, by.x="J_ID", by.y="J_ID")
+head(alpha_total)
+
+alpha_cor <- alpha_total %>% dplyr::select(-J_ID)
+#Spearman correlation
+df1 <- cor(alpha_cor, method = "spearman", use = "pairwise.complete.obs")
+df1
+#Pearson correlation:
+df2 <- cor(alpha_cor, method = "pearson", use = "pairwise.complete.obs")
+df2
+```
+
+
+# Calculation of beta diversity 
+
+Calculate beta diversity based on species level:
+```{r warning=FALSE}
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
+
+#Bray Curtis: 
+beta_div_relab_bray = phyloseq::distance(ps_relab, method='bray')
+beta_div_relab_bray %>% as.vector %>% summary
+
+#Jaccard:
+beta_div_relab_jaccard = phyloseq::distance(ps_relab, method='jaccard', binary = TRUE)
+beta_div_relab_jaccard %>% as.vector %>% summary
+
+
+#Aitchison:
+otu_aict <- t(otu_table(ps_count))
+otu_aict[1:5, 1:5]
+
+#Impute zeros
+otu_comp <-  cmultRepl((otu_aict), method="CZM", output="p-counts")
+otu_comp[1:5, 1:5]
+
+```
+
+```{r echo=T, warning=FALSE, results='hide'}
+
+#Clr transformation
+otu_clr <- rgr::clr(otu_comp)
+```
+
+```{r}
+#Transform back into phyloseq object:
+ps_clr <- phyloseq(otu_table(otu_clr, taxa_are_rows = F), tax_table(ps_count), sample_data(meta))
+
+saveRDS(ps_clr, paste0(path, "humann3_processed_output/Phyloseq/", "ps_clr.rds"))
+
+#Calculate Euclidean distance (=Aitchison's distance):
+beta_div_relab_ait = phyloseq::distance(ps_clr, method='euclidean')
+
+#Save files
+saveRDS(beta_div_relab_bray, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_bray.RDS"))
+saveRDS(beta_div_relab_jaccard, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_jaccard.RDS"))
+saveRDS(beta_div_relab_ait, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_aitchison.RDS"))
+
+```
+
+
+Plot beta diversity using NMDS to check for outliers:
+Can also be used to visually inspect association with variables. 
+Stress:
+<0.05 = excellent
+<0.1 = great
+<0.2 = good/ok
+<0.3 = poor
+
+Bray Curtis distance on species level:
+```{r}
+BRAY_NMDS_relab_SPE=metaMDS(beta_div_relab_bray, k=2,trymax=30)
+BRAY_NMDS_relab_SPE$stress
+
+#Plotting
+data.scores = as.data.frame(scores(BRAY_NMDS_relab_SPE))
+data.scores$sex <- sample_data(ps_relab)$sex
+data.scores$age_gr <- sample_data(ps_relab)$age_gr
+data.scores$time_point <- sample_data(ps_relab)$time_point
+data.scores$f_cal <- sample_data(ps_relab)$f_cal_current
+data.scores$f_cal_binary <- sample_data(ps_relab)$fcal_binary
+data.scores$score <- sample_data(ps_relab)$score
+data.scores$score_binary <- sample_data(ps_relab)$score_binary
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(sex)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Sex")
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(age_gr)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Age group")
+
+data.scores1 <- data.scores %>% filter(!is.na(f_cal))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Faecal calprotectin")
+
+data.scores1$f_cal_binary1 <- factor(ifelse(data.scores1$f_cal_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Paraclinical")+
+  stat_ellipse()+ggtitle("Bray Curtis distance")
+
+data.scores2 <- data.scores %>% filter(!is.na(score))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Disease score")+
+  stat_ellipse()
+
+data.scores2$score_binary1 <- factor(ifelse(data.scores2$score_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Clinical")+
+  stat_ellipse()+ggtitle("Bray Curtis distance")
+
+```
+
+Jaccard distance on species level:
+```{r}
+
+JAC_NMDS_relab_SPE=metaMDS(beta_div_relab_jaccard,k=2,trymax=30)
+JAC_NMDS_relab_SPE$stress 
+    
+#Plotting
+data.scores = as.data.frame(scores(JAC_NMDS_relab_SPE))
+data.scores$sex <- sample_data(ps_relab)$sex
+data.scores$time_point <- sample_data(ps_relab)$time_point
+data.scores$age_gr <- sample_data(ps_relab)$age_gr
+data.scores$f_cal <- sample_data(ps_relab)$f_cal_current
+data.scores$f_cal_binary <- sample_data(ps_relab)$fcal_binary
+data.scores$score <- sample_data(ps_relab)$score
+data.scores$score_binary <- sample_data(ps_relab)$score_binary
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(sex)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Sex")
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(age_gr)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Age group")
+
+data.scores1 <- data.scores %>% filter(!is.na(f_cal))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Faecal calprotectin")
+
+data.scores1$f_cal_binary1 <- factor(ifelse(data.scores1$f_cal_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Paraclinical")+
+  stat_ellipse()+ggtitle("Jaccard distance")
+
+data.scores2 <- data.scores %>% filter(!is.na(score))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Disease score")+
+  stat_ellipse()
+
+data.scores2$score_binary1 <- factor(ifelse(data.scores2$score_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Clinical")+
+  stat_ellipse()+ggtitle("Jaccard distance")
+
+
+```
+
+Aitchison's distance:
+```{r}
+Ait_NMDS_relab_SPE=metaMDS(beta_div_relab_ait,k=2,trymax=30)
+Ait_NMDS_relab_SPE$stress
+
+data.scores = as.data.frame(scores(Ait_NMDS_relab_SPE))
+data.scores$sex <- sample_data(ps_relab)$sex
+data.scores$time_point <- sample_data(ps_relab)$time_point
+data.scores$age_gr <- sample_data(ps_relab)$age_gr
+data.scores$f_cal <- sample_data(ps_relab)$f_cal_current
+data.scores$f_cal_binary <- sample_data(ps_relab)$fcal_binary
+data.scores$score <- sample_data(ps_relab)$score
+data.scores$score_binary <- sample_data(ps_relab)$score_binary
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(sex)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Sex")
+
+ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(age_gr)))+
+  geom_point()+theme_classic()+
+  stat_ellipse()+labs(color="Age group")
+
+data.scores1 <- data.scores %>% filter(!is.na(f_cal))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Faecal calprotectin")
+
+data.scores1$f_cal_binary1 <- factor(ifelse(data.scores1$f_cal_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Paraclinical")+
+  stat_ellipse()+ggtitle("Aitchison's distance")
+
+data.scores2 <- data.scores %>% filter(!is.na(score))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Disease score")+
+  stat_ellipse()
+
+data.scores2$score_binary1 <- factor(ifelse(data.scores2$score_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
+ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score_binary1))+
+  geom_point(size=1)+theme_classic()+
+  labs(color="Clinical")+
+  stat_ellipse()+ggtitle("Aitchison's distance")
+
+```
+
+
+# Prefiltering of dataframe for single species analyses
+
+Select species to test in single species analyses. Species are preselected based on high mean and high variance across samples. This is done to increase power and only investigate species, that could be biological interesting. Finally, species are also selected based on proportion of zeros:
+```{r}
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
+
+count <- as.data.frame(t(otu_table(ps_count)))
+relab <- as.data.frame(t(otu_table(ps_relab)))
+
+#Count data
+#Subset based on highest mean and variance
+step1 <- count[ ,colMeans(count) >= quantile(colMeans(count), 0.5)]
+dim(step1) #reduced to 275 taxa
+                
+step2 <- apply(step1, 2, var)
+step2 <- step1[ ,step2 >= quantile( step2, 0.50) ]
+dim(step2) #reduced to 138 taxa
+
+ps_count_sub_mean_var <- prune_taxa(colnames(step2),ps_count)
+saveRDS(ps_count_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var.rds"))
+
+#Subset based on zero proportion:
+non <- nonzero(step2)
+for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
+step3 <- step2[,names(for_analysis)]
+dim(step3) #reduced to 77 taxa
+
+ps_count_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_count)
+saveRDS(ps_count_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var_zero.rds"))
+
+##Relative abundance data
+step1 <- relab[ ,colMeans(relab) >= quantile(colMeans(relab), 0.5)]
+dim(step1) #reduced to 275 taxa
+                
+step2 <- apply(step1, 2, var)
+step2 <- step1[ ,step2 >= quantile( step2, 0.50) ]
+dim(step2) #reduced to 138 taxa
+
+ps_relab_sub_mean_var <- prune_taxa(colnames(step2),ps_relab)
+saveRDS(ps_relab_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var.rds"))
+
+non <- nonzero(step2)
+for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
+step3 <- step2[,names(for_analysis)]
+dim(step3) #reduced to 77 taxa
+
+ps_relab_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_relab)
+saveRDS(ps_relab_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var_zero.rds"))
+
+#Evaluate: Zeros, dispersion
+#Mean:
+mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, FUN=mean))
+#Variance:
+mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, FUN=stats::var))
+#Zero proportion:
+mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) sum(x==0)/207))
+sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) sum(x==0)/207))
+
+#Mean to variance ratio:
+mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
+sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
+
+```
+
+```{r}
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
+ps_clr <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_clr.rds"))
+
+#Select one sample (J28339) and plot species in histogram
+count_plot <- subset_samples(ps_count, J_ID=="J28339")
+plot_count <- as.data.frame(as.matrix(otu_table(count_plot)))
+
+ggplot(plot_count)+
+  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Species count")+ylab("")+theme_classic()
+
+
+relab_plot <- subset_samples(ps_relab, J_ID=="J28339")
+plot_relab <- as.data.frame(as.matrix(otu_table(relab_plot)))
+ggplot(plot_relab)+
+  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Species relative abundance (%)")+ylab("")+theme_classic()+ylim(0,600)
+ggplot(plot_relab)+
+  geom_histogram(aes(x=asin(sqrt(J28339))), fill="darkblue", bins=50)+xlab("Arcsine square root")+ylab("")+theme_classic()+ylim(0,600)
+
+clr_plot <- subset_samples(ps_clr, J_ID=="J28339")
+plot_clr <- as.data.frame(t(otu_table(clr_plot)))
+ggplot(plot_clr)+
+  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Clr transformed")+ylab("")+theme_classic()
+
+
+#Select one species (Akkermansia_muc) and plot the a
+count_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_count)
+plot_count <- as.data.frame(t(otu_table(count_plot)))
+ggplot(plot_count)+
+  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Species count")+ylab("")+theme_classic()
+
+relab_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_relab)
+plot_relab <- as.data.frame(t(otu_table(relab_plot)))
+ggplot(plot_relab)+
+  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Species relative abundance (%)")+ylab("")+theme_classic()
+ggplot(plot_relab)+
+  geom_histogram(aes(x=asin(sqrt(s__Eubacterium_sp_CAG_38))), fill="darkblue", bins=50)+xlab("Arcsine square root")+ylab("")+theme_classic()
+
+clr_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_clr)
+plot_clr <- as.data.frame(as.matrix(otu_table(clr_plot)))
+ggplot(plot_clr)+
+  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Clr transformed")+ylab("")+theme_classic()
+
+
+```
+
