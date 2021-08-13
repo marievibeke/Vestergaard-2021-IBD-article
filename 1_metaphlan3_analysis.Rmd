@@ -632,28 +632,8 @@ ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_
 count <- as.data.frame(t(otu_table(ps_count)))
 relab <- as.data.frame(t(otu_table(ps_relab)))
 
-#Count data
+#Relab data
 #Subset based on highest mean and variance
-step1 <- count[ ,colMeans(count) >= quantile(colMeans(count), 0.5)]
-dim(step1) #reduced to 275 taxa
-                
-step2 <- apply(step1, 2, var)
-step2 <- step1[ ,step2 >= quantile( step2, 0.50) ]
-dim(step2) #reduced to 138 taxa
-
-ps_count_sub_mean_var <- prune_taxa(colnames(step2),ps_count)
-saveRDS(ps_count_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var.rds"))
-
-#Subset based on zero proportion:
-non <- nonzero(step2)
-for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
-step3 <- step2[,names(for_analysis)]
-dim(step3) #reduced to 77 taxa
-
-ps_count_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_count)
-saveRDS(ps_count_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var_zero.rds"))
-
-##Relative abundance data
 step1 <- relab[ ,colMeans(relab) >= quantile(colMeans(relab), 0.5)]
 dim(step1) #reduced to 275 taxa
                 
@@ -664,13 +644,21 @@ dim(step2) #reduced to 138 taxa
 ps_relab_sub_mean_var <- prune_taxa(colnames(step2),ps_relab)
 saveRDS(ps_relab_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var.rds"))
 
+#Subset based on zero proportion:
 non <- nonzero(step2)
 for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
 step3 <- step2[,names(for_analysis)]
-dim(step3) #reduced to 77 taxa
+dim(step3) #reduced to 75 taxa
 
 ps_relab_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_relab)
 saveRDS(ps_relab_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var_zero.rds"))
+
+##Keep the same taxa in the count dataset
+ps_count_sub_mean_var <- prune_taxa(colnames(step2),ps_count)
+saveRDS(ps_count_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var.rds"))
+
+ps_count_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_count)
+saveRDS(ps_count_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var_zero.rds"))
 
 #Evaluate: Zeros, dispersion
 #Mean:
@@ -687,6 +675,7 @@ sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
 
 ```
 
+Plot distributions to get a feeling of the data:
 ```{r}
 ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
 ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))

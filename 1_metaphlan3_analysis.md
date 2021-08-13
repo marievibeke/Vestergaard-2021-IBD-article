@@ -952,42 +952,40 @@ BRAY_NMDS_relab_SPE=metaMDS(beta_div_relab_bray, k=2,trymax=30)
 ```
 
     ## Run 0 stress 0.2394775 
-    ## Run 1 stress 0.2425353 
-    ## Run 2 stress 0.2416314 
-    ## Run 3 stress 0.2462542 
-    ## Run 4 stress 0.2396685 
-    ## ... Procrustes: rmse 0.009573006  max resid 0.08588761 
-    ## Run 5 stress 0.2451973 
-    ## Run 6 stress 0.2396511 
-    ## ... Procrustes: rmse 0.004159187  max resid 0.05157973 
-    ## Run 7 stress 0.2405528 
-    ## Run 8 stress 0.2428821 
-    ## Run 9 stress 0.2524142 
-    ## Run 10 stress 0.2476465 
-    ## Run 11 stress 0.2462557 
-    ## Run 12 stress 0.2444917 
-    ## Run 13 stress 0.2402754 
-    ## Run 14 stress 0.2395614 
-    ## ... Procrustes: rmse 0.003933354  max resid 0.04275597 
-    ## Run 15 stress 0.23956 
-    ## ... Procrustes: rmse 0.003774621  max resid 0.04278757 
-    ## Run 16 stress 0.2443337 
-    ## Run 17 stress 0.2401067 
-    ## Run 18 stress 0.2450222 
-    ## Run 19 stress 0.2396571 
-    ## ... Procrustes: rmse 0.009297059  max resid 0.0920567 
-    ## Run 20 stress 0.2408425 
-    ## Run 21 stress 0.2426335 
-    ## Run 22 stress 0.2497399 
-    ## Run 23 stress 0.2395625 
-    ## ... Procrustes: rmse 0.003037255  max resid 0.03310332 
-    ## Run 24 stress 0.2478737 
-    ## Run 25 stress 0.2427849 
-    ## Run 26 stress 0.2438679 
-    ## Run 27 stress 0.2429152 
-    ## Run 28 stress 0.2415974 
-    ## Run 29 stress 0.2569905 
-    ## Run 30 stress 0.2446639 
+    ## Run 1 stress 0.2394776 
+    ## ... Procrustes: rmse 0.001342804  max resid 0.01325997 
+    ## Run 2 stress 0.2581808 
+    ## Run 3 stress 0.2446643 
+    ## Run 4 stress 0.2431509 
+    ## Run 5 stress 0.240479 
+    ## Run 6 stress 0.2410045 
+    ## Run 7 stress 0.2571839 
+    ## Run 8 stress 0.2456569 
+    ## Run 9 stress 0.2462127 
+    ## Run 10 stress 0.2425744 
+    ## Run 11 stress 0.2420801 
+    ## Run 12 stress 0.2529363 
+    ## Run 13 stress 0.2536345 
+    ## Run 14 stress 0.2395604 
+    ## ... Procrustes: rmse 0.00373738  max resid 0.04279012 
+    ## Run 15 stress 0.2490423 
+    ## Run 16 stress 0.2452456 
+    ## Run 17 stress 0.2435405 
+    ## Run 18 stress 0.2405536 
+    ## Run 19 stress 0.2437459 
+    ## Run 20 stress 0.2528236 
+    ## Run 21 stress 0.2415986 
+    ## Run 22 stress 0.2414386 
+    ## Run 23 stress 0.2396585 
+    ## ... Procrustes: rmse 0.009352904  max resid 0.09236033 
+    ## Run 24 stress 0.2453754 
+    ## Run 25 stress 0.2414289 
+    ## Run 26 stress 0.2428442 
+    ## Run 27 stress 0.2436264 
+    ## Run 28 stress 0.2438926 
+    ## Run 29 stress 0.2413141 
+    ## Run 30 stress 0.2395624 
+    ## ... Procrustes: rmse 0.003947754  max resid 0.04283603 
     ## *** No convergence -- monoMDS stopping criteria:
     ##     11: no. of iterations >= maxit
     ##     19: stress ratio > sratmax
@@ -1070,49 +1068,48 @@ JAC_NMDS_relab_SPE=metaMDS(beta_div_relab_jaccard,k=2,trymax=30)
 ```
 
     ## Run 0 stress 0.1875643 
-    ## Run 1 stress 0.1981147 
-    ## Run 2 stress 0.1978564 
-    ## Run 3 stress 0.1980911 
-    ## Run 4 stress 0.187544 
+    ## Run 1 stress 0.192978 
+    ## Run 2 stress 0.1967093 
+    ## Run 3 stress 0.2003402 
+    ## Run 4 stress 0.2070886 
+    ## Run 5 stress 0.1956265 
+    ## Run 6 stress 0.2006637 
+    ## Run 7 stress 0.1965186 
+    ## Run 8 stress 0.2018448 
+    ## Run 9 stress 0.1991011 
+    ## Run 10 stress 0.1914026 
+    ## Run 11 stress 0.1964559 
+    ## Run 12 stress 0.1930787 
+    ## Run 13 stress 0.2091986 
+    ## Run 14 stress 0.1960436 
+    ## Run 15 stress 0.1953311 
+    ## Run 16 stress 0.1988018 
+    ## Run 17 stress 0.2028475 
+    ## Run 18 stress 0.2001787 
+    ## Run 19 stress 0.194994 
+    ## Run 20 stress 0.1913556 
+    ## Run 21 stress 0.1911913 
+    ## Run 22 stress 0.2039343 
+    ## Run 23 stress 0.1924176 
+    ## Run 24 stress 0.2090328 
+    ## Run 25 stress 0.1885738 
+    ## Run 26 stress 0.1875255 
     ## ... New best solution
-    ## ... Procrustes: rmse 0.001936578  max resid 0.01917824 
-    ## Run 5 stress 0.196166 
-    ## Run 6 stress 0.2043258 
-    ## Run 7 stress 0.1875426 
-    ## ... New best solution
-    ## ... Procrustes: rmse 0.001537325  max resid 0.01867634 
-    ## Run 8 stress 0.2007504 
-    ## Run 9 stress 0.1923612 
-    ## Run 10 stress 0.196097 
-    ## Run 11 stress 0.1925057 
-    ## Run 12 stress 0.1888493 
-    ## Run 13 stress 0.1977337 
-    ## Run 14 stress 0.1980392 
-    ## Run 15 stress 0.1904409 
-    ## Run 16 stress 0.1908963 
-    ## Run 17 stress 0.1971459 
-    ## Run 18 stress 0.201916 
-    ## Run 19 stress 0.1901817 
-    ## Run 20 stress 0.1903933 
-    ## Run 21 stress 0.196793 
-    ## Run 22 stress 0.1975401 
-    ## Run 23 stress 0.4168381 
-    ## Run 24 stress 0.2106805 
-    ## Run 25 stress 0.2050815 
-    ## Run 26 stress 0.1990921 
-    ## Run 27 stress 0.1969141 
-    ## Run 28 stress 0.1945157 
-    ## Run 29 stress 0.1902582 
-    ## Run 30 stress 0.2014027 
+    ## ... Procrustes: rmse 0.003226238  max resid 0.02894185 
+    ## Run 27 stress 0.1984838 
+    ## Run 28 stress 0.1955699 
+    ## Run 29 stress 0.1904734 
+    ## Run 30 stress 0.2008447 
     ## *** No convergence -- monoMDS stopping criteria:
-    ##     10: no. of iterations >= maxit
-    ##     20: stress ratio > sratmax
+    ##     12: no. of iterations >= maxit
+    ##     17: stress ratio > sratmax
+    ##      1: scale factor of the gradient < sfgrmin
 
 ``` r
 JAC_NMDS_relab_SPE$stress 
 ```
 
-    ## [1] 0.1875426
+    ## [1] 0.1875255
 
 ``` r
 #Plotting
@@ -1186,38 +1183,39 @@ Ait_NMDS_relab_SPE=metaMDS(beta_div_relab_ait,k=2,trymax=30)
 ```
 
     ## Run 0 stress 0.2177323 
-    ## Run 1 stress 0.2352042 
-    ## Run 2 stress 0.2228992 
-    ## Run 3 stress 0.2310001 
-    ## Run 4 stress 0.2268438 
-    ## Run 5 stress 0.2411524 
-    ## Run 6 stress 0.2335715 
-    ## Run 7 stress 0.2246008 
-    ## Run 8 stress 0.2333673 
-    ## Run 9 stress 0.2346433 
-    ## Run 10 stress 0.2285337 
-    ## Run 11 stress 0.2232951 
-    ## Run 12 stress 0.2272686 
-    ## Run 13 stress 0.2237968 
-    ## Run 14 stress 0.2261283 
-    ## Run 15 stress 0.2330967 
-    ## Run 16 stress 0.2227301 
-    ## Run 17 stress 0.416836 
-    ## Run 18 stress 0.2330722 
-    ## Run 19 stress 0.2269406 
-    ## Run 20 stress 0.2291589 
-    ## Run 21 stress 0.2355369 
-    ## Run 22 stress 0.2325738 
-    ## Run 23 stress 0.2269579 
-    ## Run 24 stress 0.2330689 
-    ## Run 25 stress 0.2284225 
-    ## Run 26 stress 0.2284804 
-    ## Run 27 stress 0.231556 
-    ## Run 28 stress 0.2249567 
-    ## Run 29 stress 0.2284001 
-    ## Run 30 stress 0.2263223 
+    ## Run 1 stress 0.2318496 
+    ## Run 2 stress 0.2318032 
+    ## Run 3 stress 0.2276403 
+    ## Run 4 stress 0.23974 
+    ## Run 5 stress 0.2315524 
+    ## Run 6 stress 0.4167481 
+    ## Run 7 stress 0.233758 
+    ## Run 8 stress 0.2267976 
+    ## Run 9 stress 0.4168379 
+    ## Run 10 stress 0.2374451 
+    ## Run 11 stress 0.2389345 
+    ## Run 12 stress 0.2383911 
+    ## Run 13 stress 0.2309761 
+    ## Run 14 stress 0.2309437 
+    ## Run 15 stress 0.2312548 
+    ## Run 16 stress 0.2448189 
+    ## Run 17 stress 0.2247684 
+    ## Run 18 stress 0.2196336 
+    ## Run 19 stress 0.2323543 
+    ## Run 20 stress 0.2291732 
+    ## Run 21 stress 0.2271237 
+    ## Run 22 stress 0.2305894 
+    ## Run 23 stress 0.2294846 
+    ## Run 24 stress 0.2278968 
+    ## Run 25 stress 0.2311706 
+    ## Run 26 stress 0.24074 
+    ## Run 27 stress 0.2382075 
+    ## Run 28 stress 0.223095 
+    ## Run 29 stress 0.2303622 
+    ## Run 30 stress 0.2253251 
     ## *** No convergence -- monoMDS stopping criteria:
-    ##     30: stress ratio > sratmax
+    ##     29: stress ratio > sratmax
+    ##      1: scale factor of the gradient < sfgrmin
 
 ``` r
 Ait_NMDS_relab_SPE$stress
@@ -1304,40 +1302,8 @@ ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_
 count <- as.data.frame(t(otu_table(ps_count)))
 relab <- as.data.frame(t(otu_table(ps_relab)))
 
-#Count data
+#Relab data
 #Subset based on highest mean and variance
-step1 <- count[ ,colMeans(count) >= quantile(colMeans(count), 0.5)]
-dim(step1) #reduced to 275 taxa
-```
-
-    ## [1] 207 275
-
-``` r
-step2 <- apply(step1, 2, var)
-step2 <- step1[ ,step2 >= quantile( step2, 0.50) ]
-dim(step2) #reduced to 138 taxa
-```
-
-    ## [1] 207 138
-
-``` r
-ps_count_sub_mean_var <- prune_taxa(colnames(step2),ps_count)
-saveRDS(ps_count_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var.rds"))
-
-#Subset based on zero proportion:
-non <- nonzero(step2)
-for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
-step3 <- step2[,names(for_analysis)]
-dim(step3) #reduced to 77 taxa
-```
-
-    ## [1] 207  77
-
-``` r
-ps_count_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_count)
-saveRDS(ps_count_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var_zero.rds"))
-
-##Relative abundance data
 step1 <- relab[ ,colMeans(relab) >= quantile(colMeans(relab), 0.5)]
 dim(step1) #reduced to 275 taxa
 ```
@@ -1356,10 +1322,11 @@ dim(step2) #reduced to 138 taxa
 ps_relab_sub_mean_var <- prune_taxa(colnames(step2),ps_relab)
 saveRDS(ps_relab_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var.rds"))
 
+#Subset based on zero proportion:
 non <- nonzero(step2)
 for_analysis <- non$nonzero.p[non$nonzero.p>0.25]
 step3 <- step2[,names(for_analysis)]
-dim(step3) #reduced to 77 taxa
+dim(step3) #reduced to 75 taxa
 ```
 
     ## [1] 207  75
@@ -1368,45 +1335,54 @@ dim(step3) #reduced to 77 taxa
 ps_relab_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_relab)
 saveRDS(ps_relab_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_relab_50mean_50var_zero.rds"))
 
+##Keep the same taxa in the count dataset
+ps_count_sub_mean_var <- prune_taxa(colnames(step2),ps_count)
+saveRDS(ps_count_sub_mean_var, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var.rds"))
+
+ps_count_sub_mean_var_zero <- prune_taxa(colnames(step3),ps_count)
+saveRDS(ps_count_sub_mean_var_zero, paste0(path, "humann3_processed_output/Phyloseq/", "ps_count_50mean_50var_zero.rds"))
+
 #Evaluate: Zeros, dispersion
 #Mean:
 mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, FUN=mean))
 ```
 
-    ## [1] 109155.4
+    ## [1] 111728
 
 ``` r
 #Variance:
 mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, FUN=stats::var))
 ```
 
-    ## [1] 412702211278
+    ## [1] 423677304029
 
 ``` r
 #Zero proportion:
 mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) sum(x==0)/207))
 ```
 
-    ## [1] 0.4317711
+    ## [1] 0.4342673
 
 ``` r
 sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) sum(x==0)/207))
 ```
 
-    ## [1] 0.1974061
+    ## [1] 0.1985949
 
 ``` r
 #Mean to variance ratio:
 mean(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
 ```
 
-    ## [1] 955222.4
+    ## [1] 976942.2
 
 ``` r
 sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
 ```
 
-    ## [1] 1818325
+    ## [1] 1837766
+
+Plot distributions to get a feeling of the data:
 
 ``` r
 ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
