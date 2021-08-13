@@ -16,7 +16,7 @@ library(vegan)
 library(lme4)
 library(lmerTest)
 library(nlme)
-library("RCurl")
+library(RCurl)
 library(MuMIn)
 path = "C:/Users/Tom/Documents/10. semester/V1/data/"
 ```
