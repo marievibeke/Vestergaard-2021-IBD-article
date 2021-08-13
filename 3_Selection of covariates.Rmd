@@ -1,0 +1,360 @@
+---
+title: "Selection of covariates"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Load in packages and path to folder
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(caret)
+library(phyloseq)
+library(vegan)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library("RCurl")
+library(MuMIn)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+# Investigate the proportion of reads removed as human
+
+Read in meta data: 
+```{r}
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata.txt"))
+```
+
+Read in the data:
+```{r echo=T, message=F, error=F, warning=F}
+#Percentage of removed reads due to human
+removed_human <- read_delim(file=paste0(path, "../analysis/", "summary_stats_of_QC.txt"), delim="\t")
+removed_human <- removed_human %>% dplyr::select(J_ID, percent_removed_as_human)
+removed_human <-  removed_human %>% mutate(percent_removed_as_human = as.numeric(percent_removed_as_human))
+```
+
+```{r}
+summary(removed_human$percent_removed_as_human)
+
+#Unmapped MetaPhlan
+bug_relab <- read.csv(paste0(path, "humann3_processed_output/Joined_tables/", "Joined_metaphlan_bugs_list_relab.tsv"), sep = "\t", strip.white = T, stringsAsFactors = F, row.names = 1) 
+colnames(bug_relab) <- substr(colnames(bug_relab), start = 1, stop = 6)
+
+relab_unknown <- bug_relab[1,]
+relab_unknown <- t(relab_unknown)
+relab_unknown <- as.data.frame(relab_unknown)
+relab_unknown$J_ID <- rownames(relab_unknown)
+```
+
+```{r echo=T, message=F, error=F, warning=F}
+#Unmapped HumanN
+path_abun_unstratified <- read_delim(paste0(path, "humann3_processed_output/processed_tables/", "pathway_relab_unstratified.txt"), delim = '\t')
+humann_path <- path_abun_unstratified %>% dplyr::select(J_ID, UNMAPPED)
+humann_path <- humann_path %>% rename(path_unmapped = UNMAPPED)
+```
+
+```{r}
+
+#Merge 
+missing_data <- merge(removed_human, relab_unknown, by.x="J_ID", by.y="J_ID")
+missing_data <- missing_data %>% rename(metaphlan_unknown=UNKNOWN)
+missing_data <- merge(missing_data, humann_path, by.x="J_ID", by.y="J_ID")
+head(missing_data)
+
+#Save missing
+write.table(missing_data, file=paste0(path, "metadata/", "missing_data.txt"), col.names = T, row.names = F, quote = F, sep = '\t')
+
+#Plots: Unmapped reads vs. the proportion of reads removed as human
+ggplot(missing_data)+
+  geom_point(aes(x=percent_removed_as_human*100, y=path_unmapped*100), size=1)+theme_classic()+
+  xlab("Reads removed as human (%)")+ylab("HUMAnN: Unmapped reads (%)")+
+  geom_vline(xintercept = 85, linetype=2, color="blue")
+
+ggplot(missing_data)+
+  geom_point(aes(x=percent_removed_as_human*100, y=metaphlan_unknown), size=1)+theme_classic()+
+  xlab("Reads removed as human (%)")+ylab("MetaPhlAn: Unmapped reads (%)")+
+  geom_vline(xintercept = 85, linetype=2, color="blue")
+
+sum(missing_data$percent_removed_as_human>0.85) #6 datapoint have more that 85% of reads removed as human reads
+
+#Remove samples with more than 85% removed as human:
+meta <- merge(meta, missing_data, by.x="J_ID", by.y="J_ID")
+meta <- meta %>% filter(percent_removed_as_human < 0.85)
+dim(meta) #202 samples left
+
+#Save the new meta data:
+write.table(meta, file=paste0(path, "metadata/", "preped_metadata_filtered.txt"), col.names = T, row.names = F, quote = F, sep = '\t')
+```
+
+# Investigate predicters: Correlation and distribution
+
+Investigate VIF and correlation coefficients
+```{r}
+#Model of the 4 main covariates: 
+preds <- meta %>% dplyr::select(f_cal_current, age_gr, study_gr,sex, BMI)
+model <- lm(f_cal_current~., data=preds)
+car::vif(model)
+
+#All predicters and disease score
+preds <- meta %>% dplyr::select(f_cal_current, age_gr, study_gr,sex, BMI, study_gr,sex, asa, aza, pred, l_asa, l_pred, bio)
+model <- lm(f_cal_current~., data=preds)
+car::vif(model)
+#Largest VIF = 1.65 - not high enough to remove predicters
+
+#Investigate correlation coefficients:
+preds <- meta %>% dplyr::select(f_cal_current, age_gr, study_gr,sex, BMI, study_gr,sex, asa, aza, pred, l_asa, l_pred, bio)
+#Spearman correlation
+df2 <- cor(preds, method = "spearman", use = "pairwise.complete.obs")
+df2
+#Pearson correlation:
+df2 <- cor(preds, method = "pearson", use = "pairwise.complete.obs")
+df2
+
+
+#How similar are clinical and paraclinical remission?
+meta$score_binary_compare <- as.factor(ifelse(meta$score_binary == "remission", 0, 1))
+
+sum(as.numeric(meta$fcal_binary==meta$score_binary_compare), na.rm=T)/(dim(meta)[1]-sum(is.na(as.numeric(meta$fcal_binary==meta$score_binary_compare))))
+
+#How similar are the discrete numeric disease score and the measure of f_cal?
+preds <- meta %>% dplyr::select(f_cal_current, score_num)
+df2 <- cor(preds, method = "spearman", use = "pairwise.complete.obs")
+df2
+
+```
+
+
+Are disease score and numeric predicters normally distributed?
+```{r warning=FALSE, message=F}
+#Check BMI
+ggplot(meta)+geom_histogram(aes(x=BMI), fill="lightblue", color="black")+theme_classic()
+
+#Check faecal calprotectin:
+ggplot(meta)+geom_histogram(aes(x=f_cal_current), fill="lightblue", color="black")+theme_classic()
+
+#Check discrete numeric disease score:
+ggplot(meta)+geom_histogram(aes(x=score_num), fill="lightblue", color="black")+theme_classic()
+```
+
+BMI is roughly normally distributed. The two disease scores are not, and this must be considered in further analyses. 
+
+# Selection of microbiome covariates
+
+Investigation of association between covariates and microbiome composition.
+This is investigated using PERMANOVA. 
+```{r}
+set.seed(1)
+#Read in data and subset the phyloseq objects based on the filtered meta data:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds")) 
+ps_clr <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_clr.rds")) 
+meta <- read.delim(file=paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+ps_count_sub <-subset_samples(ps_count, J_ID %in% meta$J_ID)
+ps_relab_sub <-subset_samples(ps_relab, J_ID %in% meta$J_ID) 
+ps_clr_sub <-subset_samples(ps_clr, J_ID %in% meta$J_ID) 
+
+saveRDS(ps_count_sub, paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered2.rds"))
+saveRDS(ps_relab_sub, paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered2.rds"))
+saveRDS(ps_clr_sub, paste0(path, "humann3_processed_output/Phyloseq/","ps_clr_filtered2.rds"))
+
+#PERMANOVA to investigate covariates
+#There must be an even number of samples within patients. I choose patients with at least 4:
+ent <- subset_samples(ps_relab_sub, !is.na(BMI))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>3)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_relab_sub, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+
+#Two different permutation designs: 
+#1: permutation between blocks, but not within
+#2: permutation within block, but not between
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+#Test covariates and choose p-val<0.2:
+#Bray Curtis distance:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+BMI, data=reduce, method="bray", permutations=perm, by="margin")
+#None chosen
+
+#Jaccard distance:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+BMI, data=reduce, method="jaccard", binary=T, permutations=perm, by="margin")
+#None chosen
+
+#Aitchison's distance:
+ent <- subset_samples(ps_clr_sub, !is.na(BMI))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>4)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce_ait <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced_ait <- subset_samples(ps_clr_sub, J_ID %in% reduce_ait$J_ID)
+reduce_ait <- data.frame(sample_data(ps_reduced_ait))
+
+#make adonis test
+perm_ait <- how(within=Within(type="none"), plots=Plots(strata=reduce_ait$person_ID, type="free"), nperm=999)
+perm2_ait <- how(within=Within(type="free"), plots=Plots(strata=reduce_ait$person_ID, type="none"), nperm=999)
+
+adonis2(otu_table(ps_reduced_ait)~age_gr+study_gr+sex+BMI, data=reduce_ait, method="euclidean", permutations=perm_ait, by="margin")
+#Age group, study group and sex is chosen as covariates!
+
+#Keep the 3 coariates and test treatment one at a time. Select those with p-val <0.05:
+#OBS: p-values might differ slightly between runs due to permutation chance
+#Bray Curtis:
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+aza, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+pred, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+l_asa, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+l_pred, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+bio, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa_total, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+pred_total, data=reduce, method="bray", permutations=perm2, by="margin")
+
+set.seed(1)
+#Jaccard:
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa, data=reduce, method="jaccard",binary=T, permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+aza, data=reduce, method="jaccard",binary=T, permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+pred, data=reduce, method="jaccard",binary=T,permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+l_asa, data=reduce, method="jaccard",binary=T,permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+l_pred, data=reduce, method="jaccard",binary=T,permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+bio, data=reduce, method="jaccard",binary=T, permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa_total, data=reduce, method="jaccard",binary=T,permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+pred_total, data=reduce, method="jaccard",binary=T,permutations=perm2, by="margin")
+
+set.seed(1)
+#Aitchison:
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+asa, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+aza, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+pred, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+l_asa, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+l_pred, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+bio, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+asa_total, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+pred_total, data=reduce_ait, method="euclidean", permutations=perm2_ait, by="margin")
+
+
+#Final selected model! Summary
+set.seed(1)
+#Bray Curtis:
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa+bio+pred_total, data=reduce, method="bray", permutations=perm2, by=NULL)
+
+#Jaccard:
+adonis2(t(otu_table(ps_reduced))~sex+study_gr+age_gr+asa+bio+pred_total, data=reduce, method="jaccard",binary=T, permutations=perm2, by=NULL)
+
+#Aitchison
+adonis2(otu_table(ps_reduced_ait)~sex+study_gr+age_gr+asa+bio+pred_total, data=reduce_ait, method="euclidean", permutations=perm2_ait, by=NULL)
+```
+
+# Selection of disease score covariates
+
+Investigation of association between covariates and disease score:
+This is investigated using linear and logistic mixed models
+```{r warning=FALSE}
+preds <- meta %>% dplyr::select(f_cal_current, age_gr, study_gr,sex, BMI, study_gr,sex, asa, aza, pred, l_asa, l_pred, bio, pred_total, asa_total, score_num, score_binary, fcal_binary, person_ID, time_point)
+
+#Investigate the 4 central covariates, using the 4 different disease scores: Select if p-val <0.2:
+model <- lme(f_cal_current~age_gr+study_gr+sex+BMI, data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+summary(model)
+#sex and BMI
+
+model <- glmer(fcal_binary~age_gr+study_gr+sex+BMI+ (1|person_ID), data=preds, na.action=na.omit, family="binomial")
+summary(model)
+#BMI
+
+model <- glmer(score_binary~age_gr+study_gr+sex+BMI+ (1|person_ID), data=preds, na.action=na.omit, family="binomial")
+summary(model)
+
+model <- lme(score_num~age_gr+study_gr+sex+BMI, data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+summary(model)
+
+#Selected BMI and sex as covariate! 
+#Investigate treatments one at a time
+
+#F_cal:
+meds <- c("bio", "pred", "l_pred", "asa", "l_asa", "aza", "pred_total", "asa_total")
+for (med in meds){
+  form <- paste0("f_cal_current~BMI+sex+", med)
+  model <- lme(fixed=as.formula(form), data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", med), model)
+}
+
+summary(model_asa)
+summary(model_asa_total)
+summary(model_l_asa)
+summary(model_aza) 
+summary(model_l_pred)
+summary(model_pred)
+summary(model_pred_total)
+summary(model_bio)
+
+#Test f_cal_binary ~ covariates
+for (med in meds){
+  form <- paste0("fcal_binary~BMI+sex+", med, "+(1|person_ID)")
+  model <- glmer(as.formula(form), data=preds, na.action=na.omit, family="binomial")
+  assign(paste0("model_", med), model)
+}
+
+summary(model_asa)
+summary(model_asa_total)
+summary(model_l_asa)
+summary(model_aza)
+summary(model_l_pred)
+summary(model_pred)
+summary(model_pred_total)
+summary(model_bio)
+
+#Test score_binary ~ covariates
+for (med in meds){
+  form <- paste0("score_binary~BMI+sex+", med, "+(1|person_ID)")
+  model <- glmer(as.formula(form), data=preds, na.action=na.omit, family="binomial")
+  assign(paste0("model_", med), model)
+}
+
+summary(model_asa)
+summary(model_asa_total)
+summary(model_l_asa) 
+summary(model_aza)
+summary(model_l_pred)
+summary(model_pred)
+summary(model_pred_total)
+summary(model_bio)
+
+
+#Score_num ~ covariates
+for (med in meds){
+  form <- paste0("score_num~BMI+sex+", med)
+  model <- lme(fixed=as.formula(form), data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", med), model)
+}
+
+summary(model_asa)
+summary(model_asa_total)
+summary(model_l_asa)
+summary(model_aza)
+summary(model_l_pred)
+summary(model_pred)
+summary(model_pred_total)
+summary(model_bio)
+
+
+#Investigate the final chosen covariates and calculate R2:
+model <- lme(f_cal_current~BMI+sex+aza+l_asa+pred, data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+summary(model)
+r.squaredGLMM(model)
+
+model <- lme(score_num~BMI+sex+aza+l_asa+pred, data=preds, random = ~1|person_ID, na.action=na.omit, correlation = corAR1(form=~time_point|person_ID))
+summary(model)
+r.squaredGLMM(model)
+
+model <- glmer(score_binary~BMI+sex+aza+l_asa+pred+ (1|person_ID), data=preds, na.action=na.omit, family="binomial")
+summary(model)
+r.squaredGLMM(model)
+
+model <- glmer(fcal_binary~BMI+sex+aza+l_asa+pred+ (1|person_ID), data=preds, na.action=na.omit, family="binomial")
+summary(model)
+r.squaredGLMM(model)
+```

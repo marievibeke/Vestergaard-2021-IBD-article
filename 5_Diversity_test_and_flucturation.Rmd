@@ -1,0 +1,564 @@
+---
+title: "Investigation of diversity and stability"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+# Read in packages and data
+
+Read in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(vegan)
+library(caret)
+library(phyloseq)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library("RCurl")
+library(MuMIn)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+Read in data:
+```{r echo=T, message=F, error=F, warning=F}
+#Meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Alpha diversity:
+alpha_div <- read_delim(file=paste0(path, "humann3_processed_output/processed_tables/", "AlphaDiv_relab.txt"), delim="\t")
+alpha_div <- merge(alpha_div, meta, by.x="J_ID", by.y="J_ID")
+
+#Phyloseq objects:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered2.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered2.rds"))
+ps_clr <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_clr_filtered2.rds"))
+```
+
+# Does the alpha diversity associate with disease severity?
+
+Visual inspection of alpha diversity ~ disease score:
+
+```{r}
+#Clinical disease score:
+alpha1 <- alpha_div %>% filter(!is.na(score))
+alpha1$score <- factor(alpha1$score, levels=c("remission", "mild", "moderate", "severe"))
+
+ggplot(alpha1)+
+  geom_boxplot(aes(x=score, y=spec_nr_003, color=score))+theme_classic()+xlab("Disease score")+ylab("Observed diversity")+theme(legend.position = "none")
+
+ggplot(alpha1)+
+  geom_boxplot(aes(x=score, y=div_shannon_003, color=score))+theme_classic()+xlab("Disease score")+ylab("Shannon diversity")+theme(legend.position = "none")
+
+ggplot(alpha1)+
+  geom_boxplot(aes(x=score, y=div_invsimpson_003, color=score))+theme_classic()+xlab("Disease score")+ylab("Inv. Simpson")+theme(legend.position = "none")
+  
+
+#Paraclinical disease score
+alpha2 <- alpha_div %>% filter(!is.na(f_cal_current))
+
+ggplot(alpha2)+
+  geom_point(aes(x=f_cal_current, y=spec_nr_003), size=1)+theme_classic()+xlab("Faecal calprotectin")+ylab("Observed diversity")+
+  geom_vline(xintercept=250, color="blue", linetype = "dashed")
+
+ggplot(alpha2)+
+  geom_point(aes(x=f_cal_current, y=div_shannon_003), size=1)+theme_classic()+xlab("Faecal calprotectin")+ylab("Shannon diversity")+
+  geom_vline(xintercept=250, color="blue", linetype = "dashed")
+
+ggplot(alpha2)+
+  geom_point(aes(x=f_cal_current, y=div_invsimpson_003), size=1)+theme_classic()+xlab("Faecal calprotectin")+ylab("Inv. Simpson")+
+  geom_vline(xintercept=250, color="blue", linetype = "dashed")
+```
+
+Test: Does alpha diversity associate with disease score?
+Tested using linear mixed models
+The proportion of unmapped reads should be included, because it confounds the alpha diversity measure. 
+```{r warning=FALSE}
+#Transform to normality
+alpha_div$div_shannon_0032 <- (alpha_div$div_shannon_003)^2
+alpha_div$div_invsimpson_0032 <- sqrt(alpha_div$div_invsimpson_003)
+
+#Discrete numeric disease score
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+
+#Should interaction with age be included?
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_num*age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Interaction is not significant. Fit without:
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_num"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+
+##Binary clinical disease score
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+
+#Should interaction with age be included?
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_binary*age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Interaction is not significant. Fit again without interaction: 
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_binary"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+
+
+#Numeric faecal calprotectin
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+
+#Should interaction with age be included?
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+f_cal_current*age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Interaction is not significant. Fit again without interaction: 
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+f_cal_current"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+
+##Binary paraclinical disease score
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+
+#Should interaction with age be included?
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary*age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit)
+  print(summary(model1)$tTable)
+}
+
+#Interaction is not significant. Refit without interaction: 
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+#Interaction was actually significant for InvSimpson. Refit within age groups:
+alpha_div_c <- alpha_div %>% filter(age_gr==1)
+alpha_div_a <- alpha_div %>% filter(age_gr==2)
+
+form <- as.formula(paste0("div_invsimpson_0032~ study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary"))
+model_c <- lme(form, data=alpha_div_c, random=~1|person_ID, na.action=na.omit)
+print(summary(model_c)$tTable)
+
+model_a <- lme(form, data=alpha_div_a, random=~1|person_ID, na.action=na.omit)
+print(summary(model_a)$tTable)
+
+#Visualise:
+plot_alpha <- alpha_div %>% filter(!is.na(fcal_binary))
+plot_alpha$age_gr <- ifelse(plot_alpha$age_gr==1, "Children", "Adults")
+plot_alpha$age_gr <- factor(plot_alpha$age_gr, levels=c("Children", "Adults"))
+plot_alpha$fcal_binary <- ifelse(plot_alpha$fcal_binary==0, "Remission", "Disease")
+plot_alpha$fcal_binary <- factor(plot_alpha$fcal_binary, levels=c("Remission", "Disease"))
+
+ggplot(plot_alpha)+
+  geom_boxplot(aes(x=fcal_binary, y=div_invsimpson_003, color=age_gr))+theme_classic()+xlab("Binary paraclinical disease score")+ylab("Inv. Simpson")+labs(color="Age group")
+
+#Also have a look at the others:
+ggplot(plot_alpha)+
+  geom_boxplot(aes(x=fcal_binary, y=div_shannon_003, color=age_gr))+theme_classic()+xlab("Binary paraclinical disease score")+ylab("Shannon diversity")+labs(color="Age group")
+
+ggplot(plot_alpha)+
+  geom_boxplot(aes(x=fcal_binary, y=spec_nr_003, color=age_gr))+theme_classic()+xlab("Binary paraclinical disease score")+ylab("Observed richness")+labs(color="Age group")
+
+```
+
+
+# Does beta diversity associate with disease score?
+Tested with PERMANOVA
+```{r}
+#Clinical disease score
+#Number of samples/participant must be even! Select samples with 4 datapoints
+ent <- subset_samples(ps_relab, !is.na(score))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>3)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_relab, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+reduce$score_num <- ifelse(reduce$score == "remission", 1, ifelse(reduce$score == "mild", 2, ifelse(reduce$score == "moderate", 3, 4)))
+reduce <- merge(reduce, meta) 
+reduce <- reduce %>% dplyr::select(age_gr, study_gr, sex, asa, bio, pred_total, metaphlan_unknown, score_binary, score_num, person_ID)
+
+#Permutation design:
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+#Bray Curtis:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_binary, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_num, data=reduce, method="bray", permutations=perm2, by="margin")
+
+set.seed(1)
+#Jaccard
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_binary, data=reduce, method="jaccard", binary=T, permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_num, data=reduce, method="jaccard", binary=T,  permutations=perm2, by="margin")
+
+#Aitchison
+ent <- subset_samples(ps_clr, !is.na(score))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>4)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_clr, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+reduce$score_num <- ifelse(reduce$score == "remission", 1, ifelse(reduce$score == "mild", 2, ifelse(reduce$score == "moderate", 3, 4)))
+reduce <- merge(reduce, meta) 
+reduce <- reduce %>% dplyr::select(age_gr, study_gr, sex, asa, bio, pred_total, metaphlan_unknown, score_binary, score_num, person_ID)
+
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+adonis2(otu_table(ps_reduced)~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_binary, data=reduce, method="euclidean", permutations=perm2, by="margin")
+adonis2(otu_table(ps_reduced)~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+score_num, data=reduce, method="euclidean", permutations=perm2, by="margin")
+
+
+#Paraclinical disease score
+#Number of samples/participant must be even! Select samples with 4 datapoints
+ent <- subset_samples(ps_relab, !is.na(f_cal_current))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>3)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_relab, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+reduce <- merge(reduce, meta) 
+reduce <- reduce %>% dplyr::select(age_gr, study_gr, sex, asa, bio, pred_total, metaphlan_unknown, fcal_binary, f_cal_current, person_ID)
+
+#Permutation design:
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+#Bray Curtis:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+f_cal_current, data=reduce, method="bray", permutations=perm2, by="margin")
+
+set.seed(1)
+#Jaccard
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary, data=reduce, method="jaccard", binary=T,  permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+f_cal_current, data=reduce, method="jaccard", binary=T, permutations=perm2, by="margin")
+
+#Aitchison
+ent <- subset_samples(ps_clr, !is.na(f_cal_current))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>4)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_clr, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+reduce <- merge(reduce, meta) 
+reduce <- reduce %>% dplyr::select(age_gr, study_gr, sex, asa, bio, pred_total, metaphlan_unknown, fcal_binary, f_cal_current, person_ID)
+
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+adonis2(otu_table(ps_reduced)~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+fcal_binary, data=reduce, method="euclidean", permutations=perm2, by="margin")
+adonis2(otu_table(ps_reduced)~age_gr+study_gr+sex+asa+bio+pred_total+metaphlan_unknown+f_cal_current, data=reduce, method="euclidean", permutations=perm2, by="margin")
+```
+
+# Stability analysis of the microbiome across age groups and study groups
+
+Investigation of the fluctureation of the microbiome. Is it dependend on age group? Or on study group?
+Calculation of distance (beta diversity) between sample 1 and sample 5 from the same individual. Is this internal distance dependend on the groups?
+```{r}
+#Select timepoint 1 and timepoint 5
+df <- data.frame(sample_data(ps_relab))
+df <- df %>% filter(time_point %in% c(0,4))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>1) 
+t1t5 <- df %>% filter(person_ID %in% n_df$person_ID)
+ps_t1t5 <- subset_samples(ps_relab, J_ID %in% t1t5$J_ID)
+
+#Calculate beta div
+bc_meta <-  phyloseq::distance(ps_t1t5, method="bray")
+jac_meta <- phyloseq::distance(ps_t1t5, method="jaccard", binary=T)
+
+#Transform into table
+bc_meta <- as.matrix(bc_meta)
+bc_meta <- as.data.frame(bc_meta)
+jac_meta <- as.matrix(jac_meta)
+jac_meta <- as.data.frame(jac_meta)
+
+#Make new dataframe
+t1 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(1) %>% ungroup()
+t5 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(n()) %>% ungroup()
+
+df_dist<- tibble(person_ID=t1$person_ID, J1 = t1$J_ID, J2=t5$J_ID, dist_bc=rep(NA, nrow(t1)), dist_jac=rep(NA, nrow(t1)),age_gr= as.factor(t1$age_gr), study_gr= as.factor(t1$study_gr), sex = as.factor(t1$sex))
+
+df_dist$asa <- as.factor(ifelse(t1$asa==0 & t5$asa==0, 1, ifelse(t1$asa==1 & t5$asa==0, 2, ifelse(t1$asa==0 & t5$asa==1, 3, 4))))
+df_dist$bio <- as.factor(ifelse(t1$bio==0 & t5$bio==0, 1, ifelse(t1$bio==1 & t5$bio==0, 2, ifelse(t1$bio==0 & t5$bio==1, 3, 4))))
+df_dist$pred <- as.factor(ifelse(t1$pred==0 & t5$pred==0, 1, ifelse(t1$pred==1 & t5$pred==0, 2, ifelse(t1$pred==0 & t5$pred==1, 3, 4))))
+
+df_dist <- as.data.frame(df_dist)
+for (i in 1:nrow(df_dist)){
+  df_dist[i,"dist_bc"] <- bc_meta[df_dist$J1[i], df_dist$J2[i]]
+  df_dist[i,"dist_jac"] <- jac_meta[df_dist$J1[i], df_dist$J2[i]]
+}
+
+#Make boxplot:
+df_dist$study_gr1 <- ifelse(df_dist$study_gr==1, "Newly diagnosed", ifelse(df_dist$study_gr==2, "Older diagnosis", NA))
+
+ggplot(data=df_dist,aes(x=study_gr1, y=dist_bc))+
+  geom_violin(aes( color=study_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Bray curtis distance")
+ggplot(data=df_dist,aes(x=study_gr1, y=dist_jac))+
+  geom_violin(aes( color=study_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Jaccard distance")
+
+ggplot(data=df_dist)+
+  geom_boxplot(aes(x=study_gr1, y=dist_bc, color=study_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Bray curtis distance")
+ggplot(data=df_dist)+
+  geom_boxplot(aes(x=study_gr1, y=dist_jac, color=study_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Jaccard distance")
+
+df_dist$age_gr1 <- ifelse(df_dist$age_gr==1, "Children", ifelse(df_dist$age_gr==2, "Adults", NA))
+df_dist$age_gr1 <- factor(df_dist$age_gr1, levels=c("Children", "Adults"))
+
+ggplot(data=df_dist,aes(x=age_gr1, y=dist_bc))+
+  geom_violin(aes( color=age_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Bray curtis distance")
+ggplot(data=df_dist,aes(x=age_gr1, y=dist_jac))+
+  geom_violin(aes( color=age_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Jaccard distance")
+
+ggplot(data=df_dist)+
+  geom_boxplot(aes(x=age_gr1, y=dist_bc, color=age_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Bray curtis distance")
+ggplot(data=df_dist)+
+  geom_boxplot(aes(x=age_gr1, y=dist_jac, color=age_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Jaccard distance")
+
+
+#Test if there is a difference using permutation ANOVA: Bray Curtis
+set.seed(1)
+res <- anova(lm(formula=dist_bc~age_gr+study_gr+sex+asa+bio+pred, data=df_dist))
+res
+summary(lm(formula=dist_bc~age_gr+study_gr+sex+asa+bio+pred, data=df_dist))
+
+df_test_age <- rep(NA, 1000)
+df_test_study <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_dist
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_dist))
+    test_age <- as.data.frame(anova(lm(formula=dist_bc~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+    
+    #Permute and save F-statistic: Study group
+    df_shuffle_study <- df_dist
+    df_shuffle_study$study_gr <- sample(x=df_shuffle_study$study_gr, size=nrow(df_dist))
+    test_study <- as.data.frame(anova(lm(formula=dist_bc~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_study)))
+    df_test_study[i] <- test_study["study_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+res_study <- res["study_gr", "F value"]
+
+sum(df_test_age>=res_age)/1000
+sum(df_test_study>=res_study)/1000
+
+
+#Test if there is a difference using permutation ANOVA: Jaccard
+res <- anova(lm(formula=dist_jac~age_gr+study_gr+sex+asa+bio+pred, data=df_dist))
+res
+summary(lm(formula=dist_jac~age_gr+study_gr+sex+asa+bio+pred, data=df_dist))
+
+df_test_age <- rep(NA, 1000)
+df_test_study <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_dist
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_dist))
+    test_age <- as.data.frame(anova(lm(formula=dist_jac~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+    
+    #Permute and save F-statistic: Study group
+    df_shuffle_study <- df_dist
+    df_shuffle_study$study_gr <- sample(x=df_shuffle_study$study_gr, size=nrow(df_dist))
+    test_study <- as.data.frame(anova(lm(formula=dist_jac~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_study)))
+    df_test_study[i] <- test_study["study_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+res_study <- res["study_gr", "F value"]
+
+sum(df_test_age>=res_age)/1000
+sum(df_test_study>=res_study)/1000
+
+
+
+#Aitchisons distance!
+df <- data.frame(sample_data(ps_clr))
+df <- df %>% filter(time_point %in% c(0,4))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>1) 
+t1t5 <- df %>% filter(person_ID %in% n_df$person_ID)
+ps_t1t5 <- subset_samples(ps_clr, J_ID %in% t1t5$J_ID)
+
+#Calculate beta div
+ait_meta <-  phyloseq::distance(ps_t1t5, method="euclidean")
+
+#Transform into table
+ait_meta <- as.matrix(ait_meta)
+ait_meta <- as.data.frame(ait_meta)
+
+#Make new dataframe
+t1 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(1) %>% ungroup()
+t5 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(n()) %>% ungroup()
+
+df_dist<- tibble(person_ID=t1$person_ID, J1 = t1$J_ID, J2=t5$J_ID, dist_bc=rep(NA, nrow(t1)), dist_jac=rep(NA, nrow(t1)),age_gr= as.factor(t1$age_gr), study_gr= as.factor(t1$study_gr), sex = as.factor(t1$sex))
+
+df_dist$asa <- as.factor(ifelse(t1$asa==0 & t5$asa==0, 1, ifelse(t1$asa==1 & t5$asa==0, 2, ifelse(t1$asa==0 & t5$asa==1, 3, 4))))
+df_dist$bio <- as.factor(ifelse(t1$bio==0 & t5$bio==0, 1, ifelse(t1$bio==1 & t5$bio==0, 2, ifelse(t1$bio==0 & t5$bio==1, 3, 4))))
+df_dist$pred <- as.factor(ifelse(t1$pred==0 & t5$pred==0, 1, ifelse(t1$pred==1 & t5$pred==0, 2, ifelse(t1$pred==0 & t5$pred==1, 3, 4))))
+
+df_dist_ait <- as.data.frame(df_dist)
+for (i in 1:nrow(df_dist_ait)){
+  df_dist_ait[i,"dist_ait"] <- ait_meta[df_dist_ait$J1[i], df_dist_ait$J2[i]]
+}
+
+#Make boxplot
+df_dist_ait$study_gr1 <- ifelse(df_dist_ait$study_gr==1, "Newly diagnosed", ifelse(df_dist_ait$study_gr==2, "Older diagnosis", NA))
+df_dist_ait$age_gr1 <- ifelse(df_dist_ait$age_gr==1, "Children", ifelse(df_dist_ait$age_gr==2, "Adults", NA))
+df_dist_ait$age_gr1 <- factor(df_dist_ait$age_gr1, levels=c("Children", "Adults"))
+
+ggplot(data=df_dist_ait,aes(x=study_gr1, y=dist_ait))+
+  geom_violin(aes( color=study_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Aitchison's distance")
+ggplot(data=df_dist_ait,aes(x=age_gr1, y=dist_ait))+
+  geom_violin(aes( color=age_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Aitchison's distance")
+
+
+ggplot(data=df_dist_ait)+
+  geom_boxplot(aes(x=study_gr1, y=dist_ait, color=study_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Aitchison's distance")
+ggplot(data=df_dist_ait)+
+  geom_boxplot(aes(x=age_gr1, y=dist_ait, color=age_gr1))+theme_classic()+theme(legend.position = "none")+
+  xlab(" ") + ylab("Aitchison's distance")
+
+
+#Test if there is a difference using permutation ANOVA: Aitchison
+res <- anova(lm(formula=dist_ait~age_gr+study_gr+sex+asa+bio+pred, data=df_dist_ait))
+res
+summary(lm(formula=dist_ait~age_gr+study_gr+sex+asa+bio+pred, data=df_dist_ait))
+
+set.seed(1)
+df_test_age <- rep(NA, 1000)
+df_test_study <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_dist_ait
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_dist_ait))
+    test_age <- as.data.frame(anova(lm(formula=dist_ait~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+    
+    #Permute and save F-statistic: Study group
+    df_shuffle_study <- df_dist_ait
+    df_shuffle_study$study_gr <- sample(x=df_shuffle_study$study_gr, size=nrow(df_dist_ait))
+    test_study <- as.data.frame(anova(lm(formula=dist_ait~age_gr+study_gr+sex+asa+bio+pred, data=df_shuffle_study)))
+    df_test_study[i] <- test_study["study_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+res_study <- res["study_gr", "F value"]
+
+sum(df_test_age>=res_age)/1000
+sum(df_test_study>=res_study)/1000
+```
+

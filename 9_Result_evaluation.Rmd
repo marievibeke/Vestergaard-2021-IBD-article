@@ -1,0 +1,315 @@
+---
+title: "Evaluation of results with significant interaction"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Read in packages and data
+
+Load in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(caret)
+library(phyloseq)
+library(NBZIMM)
+library(vegan)
+library(lme4)
+library(lmerTest)
+library(nlme)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+Read in results and dataframes:
+```{r}
+#Phyloseq objects:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_50mean_50var_zero.rds"))
+
+#Meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Merge meta data with phyloseq object to remove those samples with >85% reads removed as human 
+rownames(meta) <- meta$J_ID
+ps_count <- phyloseq(otu_table(ps_count), tax_table(ps_count), sample_data(meta))
+
+#Results:
+clin_res <- read.delim(file = paste0(path, "Results/", "Clinical_interaction.txt"), sep=" ") %>% filter(p_adj<0.05)
+clin_res$bugs
+clin_total <- clin_res$bugs
+para_res <- read.delim(file = paste0(path, "Results/", "ParaClinical_interaction.txt"), sep=" ") %>% filter(p_adj<0.05)
+para_res$bugs
+para_zero_res <-  read.delim(file = paste0(path, "Results/", "Paraclinical_interaction_zero.txt"), sep=" ") %>% filter(p_adj<0.05)
+para_zero_res$bugs
+para_total <- unique(c(para_res$bugs, para_zero_res$bugs))
+```
+
+# Refit species associating differently with disease score across age group
+
+Divide the dataset into children and adults, and test the association without the covariates:
+```{r}
+ps_count <- subset_samples(ps_count, !is.na(f_cal_current))
+ps_count_children <- subset_samples(ps_count, age_gr==1)
+ps_count_adults <- subset_samples(ps_count, age_gr==2)
+
+pheno_c <-  as.data.frame(as.matrix(t(otu_table(ps_count_children)))) #No transformation
+pheno_a <- as.data.frame(as.matrix(t(otu_table(ps_count_adults))))
+clinical_c <- sample_data(ps_count_children)
+clinical_a <- sample_data(ps_count_adults)
+
+#Fit model with discrete numeric and binary disease score. Fit with interaction with age:
+f_para_c <- mms(y=pheno_c[, para_total], fixed= ~log(f_cal_current+1) + offset(log(rdepth)), data=clinical_c, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~log(f_cal_current+1) + offset(log(rdepth)))
+
+f_para_a <- mms(y=pheno_a[, para_total], fixed= ~log(f_cal_current+1) + offset(log(rdepth)), data=clinical_a, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~log(f_cal_current+1) + offset(log(rdepth)))
+
+
+#Find taxa with significant (p-adj<0.05) interaction.  
+res_para_c=as.data.frame(get.fixed(f_para_c, part="dist", vr.name="log(f_cal_current + 1)"))
+res_para_c$bugs <- rownames(res_para_c)
+res_para_c
+
+res_para_c_zero=as.data.frame(get.fixed(f_para_c, part="zero", vr.name="log(f_cal_current + 1)"))
+res_para_c_zero$bugs <- rownames(res_para_c_zero)
+res_para_c_zero
+
+res_para_a=as.data.frame(get.fixed(f_para_a, part="dist", vr.name="log(f_cal_current + 1)"))
+res_para_a$bugs <- rownames(res_para_a)
+res_para_a
+
+res_para_a_zero=as.data.frame(get.fixed(f_para_a, part="zero", vr.name="log(f_cal_current + 1)"))
+res_para_a_zero$bugs <- rownames(res_para_a_zero)
+res_para_a_zero
+
+
+```
+
+Clinical disease score:
+```{r}
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_50mean_50var_zero.rds"))
+ps_count <- subset_samples(ps_count, !is.na(score_num))
+ps_count_children <- subset_samples(ps_count, age_gr==1)
+ps_count_adults <- subset_samples(ps_count, age_gr==2)
+
+pheno_c <-  as.data.frame(as.matrix(t(otu_table(ps_count_children)))) #No transformation
+pheno_a <- as.data.frame(as.matrix(t(otu_table(ps_count_adults))))
+clinical_c <- sample_data(ps_count_children)
+clinical_a <- sample_data(ps_count_adults)
+
+#Fit model with discrete numeric and binary disease score. Fit with interaction with age:
+f_clin_c <- mms(y=pheno_c[, clin_total], fixed= ~score_num + offset(log(rdepth)), data=clinical_c, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~score_num + offset(log(rdepth)))
+
+f_clin_a <- mms(y=pheno_a[, clin_total], fixed= ~score_num + offset(log(rdepth)), data=clinical_a, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~score_num + offset(log(rdepth)))
+
+
+#Find taxa with significant (p-adj<0.05) interaction.  
+res_clin_c=as.data.frame(get.fixed(f_clin_c, part="dist", vr.name="score_num"))
+res_clin_c$bugs <- rownames(res_clin_c)
+res_clin_c
+
+res_clin_c_zero=as.data.frame(get.fixed(f_clin_c, part="zero", vr.name="score_num"))
+res_clin_c_zero$bugs <- rownames(res_clin_c_zero)
+res_clin_c_zero
+
+res_clin_a=as.data.frame(get.fixed(f_clin_a, part="dist", vr.name="score_num"))
+res_clin_a$bugs <- rownames(res_clin_a)
+res_clin_a
+
+res_clin_a_zero=as.data.frame(get.fixed(f_clin_a, part="zero", vr.name="score_num"))
+res_clin_a_zero$bugs <- rownames(res_clin_a_zero)
+res_clin_a_zero
+```
+
+# Refit the pathway and two ECs that associated differently with disease score at the following time point across age groups 
+
+Implied causality: Test the one pathway and two ECs again, but divided into children and adults:
+Load in data:
+```{r}
+#Load in humann - OBS: first 3 columns: J_ID, UNMAPPED and UNINTEGRATED
+pathway <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "pathway_relab_unstratified_mean50_var50.txt")) 
+EC <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "EC_relab_unstratified_mean75_var75.txt"))
+```
+
+```{r echo=T, message=F, error=F, warning=F}
+#Load in new metedata - with shifted disease score columns
+meta <-  read_delim(file = paste0(path, "metadata/Tilpasset_metadata_timelag.txt"), col_names = T, delim= "\t")
+meta <- as_tibble(meta)
+```
+
+```{r}
+#Calculate BMI
+meta <- meta %>% mutate(BMI = weight/(height/100)^2)
+
+#Make column with categorical disease scores
+meta <- meta %>% mutate(score_p = ifelse(pucai_current < 10, "remission", ifelse(pucai_current <= 34, "mild", ifelse(pucai_current<=64, "moderate", ifelse(pucai_current>64, "severe", "NA")))))
+meta <- meta %>% mutate(score_s = ifelse(sccai_current<3, "remission", ifelse(sccai_current<=5, "mild", ifelse(sccai_current<=11, "moderate", ifelse(sccai_current>11, "severe", "NA")))))
+meta <- meta %>% mutate(score = ifelse(is.na(score_p), score_s, ifelse(is.na(score_s), score_p, "NA")))
+meta$score <- factor(meta$score, levels = c("remission", "mild", "moderate", "severe", "NA"))
+meta$score_binary <- as.factor(ifelse(meta$score == "remission", 0, 1))
+
+meta <- meta %>% mutate(score_p = ifelse(pucai_future < 10, "remission", ifelse(pucai_future <= 34, "mild", ifelse(pucai_future<=64, "moderate", ifelse(pucai_future>64, "severe", "NA")))))
+meta <- meta %>% mutate(score_s = ifelse(sccai_future<3, "remission", ifelse(sccai_future<=5, "mild", ifelse(sccai_future<=11, "moderate", ifelse(sccai_future>11, "severe", "NA")))))
+meta <- meta %>% mutate(score_future = ifelse(is.na(score_p), score_s, ifelse(is.na(score_s), score_p, "NA")))
+meta$score_future <- factor(meta$score_future, levels = c("remission", "mild", "moderate", "severe", "NA"))
+meta$score_binary_future <- as.factor(ifelse(meta$score_future == "remission", 0, 1))
+
+meta$binary_fcal <- as.factor(ifelse(meta$f_cal_current<250, 0, 1))
+meta$binary_fcal_future <- as.factor(ifelse(meta$f_cal_future<250, 0, 1))
+
+#Modify data: factorial
+meta$sex <- as.factor(meta$sex)
+meta$age_gr <- as.factor(meta$age_gr)
+meta$person_ID <- as.factor(meta$person_ID)
+meta$study_gr <- as.factor(meta$study_gr)
+```
+
+Test significant pathway:
+```{r}
+#Make dataframe:
+pathway_meta <- merge(pathway, meta, by.x = "J_ID", by.y="J_ID")
+pathway_meta_sub <- pathway_meta %>% filter(!is.na(f_cal_future))
+pathway_c <- pathway_meta_sub %>% filter(age_gr==1)
+pathway_a <- pathway_meta_sub %>% filter(age_gr==2)
+
+
+model_c <- glmer(formula=binary_fcal_future~binary_fcal+scale(ASPASN.PWY..superpathway.of.L.aspartate.and.L.asparagine.biosynthesis)+(1|person_ID), data=pathway_c, family = "binomial", na.action=na.omit)
+
+summary(model_c)
+
+model_a <- glmer(formula=binary_fcal_future~binary_fcal+scale(ASPASN.PWY..superpathway.of.L.aspartate.and.L.asparagine.biosynthesis)+(1|person_ID), data=pathway_a, family = "binomial", na.action=na.omit)
+
+summary(model_a)
+
+```
+
+Test significant EC:
+```{r}
+#Make dataframe:
+EC_meta <- merge(EC, meta, by.x = "J_ID", by.y="J_ID")
+EC_meta_sub <- EC_meta %>% filter(!is.na(f_cal_future))
+EC_c <- EC_meta_sub%>% filter(age_gr==1)
+EC_a <- EC_meta_sub%>% filter(age_gr==2)
+
+model1_c <- glmer(formula=binary_fcal_future~binary_fcal+scale(X3.5.99.6..Glucosamine.6.phosphate.deaminase)+(1|person_ID), data=EC_c, family = "binomial", na.action=na.omit)
+summary(model1_c)
+
+model1_a <- glmer(formula=binary_fcal_future~binary_fcal+scale(X3.5.99.6..Glucosamine.6.phosphate.deaminase)+(1|person_ID), data=EC_a, family = "binomial", na.action=na.omit)
+summary(model1_a)
+
+model2_c <- glmer(formula=binary_fcal_future~binary_fcal+scale(X4.2.1.47..GDP.mannose.4.6.dehydratase)+(1|person_ID), data=EC_c, family = "binomial", na.action=na.omit)
+summary(model2_c)
+
+model2_a <- glmer(formula=binary_fcal_future~binary_fcal+scale(X4.2.1.47..GDP.mannose.4.6.dehydratase)+(1|person_ID), data=EC_a, family = "binomial", na.action=na.omit)
+summary(model2_a)
+
+```
+
+# Which microbiome species contributes to significant pathways?
+
+The folate was significant. Which bacteria contributes to the folate pathway?
+Also Superpathway of L aspartate and L asparagine biosynthesis was signficant in implied
+
+Read in data:
+```{r}
+#Pathway relab
+path_count <- read.table(paste0(path, "humann3_processed_output/Joined_tables/", "Joined_pathabundance_relab.tsv"), sep = "\t", header=T, row.names = 1)
+
+#EC relab
+EC_count <- read.table(paste0(path, "humann3_processed_output/Joined_tables/", "Joined_genefamilies_relab_EC_rename.tsv"), sep = "\t", header=T, row.names = 1)
+```
+
+```{r}
+#Change J-ID:
+colnames(path_count) <- substr(colnames(path_count), start = 1, stop = 6)
+
+#Pull out the pathway
+path <- path_count[startsWith(rownames(path_count), "PWY-3841: folate transformations II|"),]
+path <- as.data.frame(t(path))
+
+colnames(path) <- substr(colnames(path), start = 37, stop=1000000)
+
+path_sorted <- as.data.frame(t(path))
+path_sorted$mean <- apply(path_sorted, 1, mean)
+path_sorted$sd <- apply(path_sorted, 1, sd)
+path_sorted <- path_sorted %>% dplyr::select(mean, sd) %>% arrange(-mean)
+path_sorted[1:20,]
+
+high_path <- path[ ,colMeans(path) >= quantile(colMeans(path), 0.75) ]
+high_path_2 <- high_path %>% dplyr::select(-c("unclassified"))
+
+colnames(high_path_2) <- gsub(".*s__","",colnames(high_path_2))
+
+ggplot(stack(high_path_2))+
+  geom_boxplot(aes(x=ind, y=values))+theme_classic()+xlab("")+ylab("Relative abundance")+theme(axis.text.x = element_text(angle = 90))
+
+#Superpathway
+path <- path_count[startsWith(rownames(path_count), "ASPASN-PWY: superpathway of L-aspartate and L-asparagine biosynthesis|"),]
+path <- as.data.frame(t(path))
+
+colnames(path) <- substr(colnames(path), start = 71, stop=1000000)
+
+path_sorted <- as.data.frame(t(path))
+path_sorted$mean <- apply(path_sorted, 1, mean)
+path_sorted$sd <- apply(path_sorted, 1, sd)
+path_sorted <- path_sorted %>% dplyr::select(mean, sd) %>% arrange(-mean)
+path_sorted[1:20,]
+
+high_path <- path[ ,colMeans(path) >= quantile(colMeans(path), 0.75) ]
+high_path_2 <- high_path %>% dplyr::select(-c("unclassified"))
+
+colnames(high_path_2) <- gsub(".*s__","",colnames(high_path_2))
+
+ggplot(stack(high_path_2))+
+  geom_boxplot(aes(x=ind, y=values))+theme_classic()+xlab("")+ylab("Relative abundance")+theme(axis.text.x = element_text(angle = 90))
+
+```
+
+# Which microbiome species contributes to significant ECs?
+
+Two ECs were signficant. Which bacteria?
+```{r}
+#Change J-ID:
+colnames(EC_count) <- substr(colnames(EC_count), start = 1, stop = 6)
+
+#Pull out the EC
+EC <- EC_count[startsWith(rownames(EC_count), "3.5.99.6: Glucosamine-6-phosphate deaminase|"),]
+EC <- as.data.frame(t(EC))
+
+colnames(EC) <- substr(colnames(EC), start = 45, stop=1000000)
+
+EC_sorted <- as.data.frame(t(EC))
+EC_sorted$mean <- apply(EC_sorted, 1, mean)
+EC_sorted$sd <- apply(EC_sorted, 1, sd)
+EC_sorted <- EC_sorted %>% dplyr::select(mean, sd) %>% arrange(-mean)
+EC_sorted[1:20,]
+
+high_EC <- EC[ ,colMeans(EC) >= quantile(colMeans(EC), 0.75) ]
+high_EC_2 <- high_EC %>% dplyr::select(-c("unclassified"))
+
+colnames(high_EC_2) <- gsub(".*s__","",colnames(high_EC_2))
+
+ggplot(stack(high_EC_2))+
+  geom_boxplot(aes(x=ind, y=values))+theme_classic()+xlab("")+ylab("Relative abundance")+theme(axis.text.x = element_text(angle = 90))
+
+#Look at GDP-mannose
+EC <- EC_count[startsWith(rownames(EC_count), "4.2.1.47: GDP-mannose 4,6-dehydratase|"),]
+EC <- as.data.frame(t(EC))
+
+colnames(EC) <- substr(colnames(EC), start = 39, stop=1000000)
+
+EC_sorted <- as.data.frame(t(EC))
+EC_sorted$mean <- apply(EC_sorted, 1, mean)
+EC_sorted$sd <- apply(EC_sorted, 1, sd)
+EC_sorted <- EC_sorted %>% dplyr::select(mean, sd) %>% arrange(-mean)
+EC_sorted[1:20,]
+
+high_EC <- EC[ ,colMeans(EC) >= quantile(colMeans(EC), 0.75) ]
+high_EC_2 <- high_EC %>% dplyr::select(-c("unclassified"))
+
+colnames(high_EC_2) <- gsub(".*s__","",colnames(high_EC_2))
+
+ggplot(stack(high_EC_2))+
+  geom_boxplot(aes(x=ind, y=values))+theme_classic()+xlab("")+ylab("Relative abundance")+theme(axis.text.x = element_text(angle = 90))
+
+```
+

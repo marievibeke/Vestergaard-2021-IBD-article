@@ -1,0 +1,918 @@
+---
+title: "Functional analyses of using NBZIMM and ZIGMM"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Read in packages and data
+
+Load in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(caret)
+library(phyloseq)
+library(NBZIMM)
+library(vegan)
+library(metaMint)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(zCompositions)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+Load in data:
+```{r}
+#Load in humann - OBS: first 3 columns: J_ID, UNMAPPED and UNINTEGRATED
+pathway <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "pathway_count_unstratified_mean50_var50.txt")) 
+EC <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "EC_relab_unstratified_mean75_var75.txt"))
+KO <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "KO_relab_unstratified_mean75_var75.txt"))
+
+#Load in meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Merge with meta data 
+pathway_meta <- merge(meta, pathway, by.x="J_ID", by.y="J_ID")
+EC_meta <- merge(meta, EC, by.x="J_ID", by.y="J_ID")
+KO_meta <- merge(meta, KO, by.x="J_ID", by.y="J_ID")
+```
+
+# Cluster pathways based on correlation
+
+The number of pathways to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+#Reduce the numer to be tested! Remove those with high positive correlation: Do this based on relative abundance!
+pathway_relab <-read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "pathway_relab_unstratified.txt")) 
+pathway_relab <- pathway_relab[, colnames(pathway)]
+
+pathway1 <- pathway_relab[, -c(1)]
+
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(pathway1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #64 different groups 
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+for (c in non.singles){
+    cluster1 <- pathway1[,groups == c]
+    plot(cluster1, main=c)
+}
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- pathway1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+#These are the pathways in the different clusters:
+for (c in 1: length(table(groups))){
+          cluster1 <- pathway1[,groups == c] 
+          print(c)
+          print(names(cluster1))
+        }
+#NULL means that there is only one pathway in the cluster
+
+```
+
+# Test the association between clinical disease score and pathways
+
+Analysis of pathways and clinical disease score:
+```{r}
+#Model the pathway counts - only the representatives
+pathway_meta_sub <- pathway_meta %>% filter(!is.na(score))
+pheno <- pathway_meta_sub[,reps] #Only the representatives
+
+#Is variance higher than the mean? 
+mean(apply(pheno, 2, FUN=mean)) 
+mean(apply(pheno, 2, FUN=stats::var)) 
+#The variance is much higher than the mean! Use a NB
+#Variance to mean ratio:
+mean(apply(pheno, 2, function(x) var(x)/mean(x)))
+sd(apply(pheno, 2, function(x) var(x)/mean(x)))
+
+#Is there zero-inflation?
+mean(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+sd(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1])) 
+#On average, 0.6% of samples have zeros. No zero-inflation!
+
+N <- pathway_meta_sub$rdepth
+person_ID <- as.factor(pathway_meta_sub$person_ID)
+sex <-  as.factor(pathway_meta_sub$sex)
+age_gr <-  as.factor(pathway_meta_sub$age_gr)
+study_gr <-  as.factor(pathway_meta_sub$study_gr)
+asa <-  as.factor(pathway_meta_sub$asa)
+bio <-  as.factor(pathway_meta_sub$bio)
+pred <-  as.factor(pathway_meta_sub$pred_total)
+score_num <- pathway_meta_sub$score_num
+time_point <- pathway_meta_sub$time_point
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, score_num, N, time_point)
+
+#Test using NB:
+f_inter <- mms(y=pheno, fixed= ~study_gr+sex+asa+bio+pred+ age_gr*score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="nb", correlation=corAR1(form=~time_point|person_ID))
+
+#Find taxa with significant (p<0.05) interaction. 
+res_inter=as.data.frame(get.fixed(f_inter, part="dist", vr.name="age_gr2:score_num"))
+res_inter$bugs <- rownames(res_inter)
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+write.table(res_inter, file = paste0(path, "Results/", "Pathway_interaction.txt"), col.names=T, row.names=F)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+res_inter_sig #None!
+
+#Divide dataset into with and witout interaction:
+pheno_1 <- pheno[, setdiff(colnames(pheno), rownames(res_inter_sig))]
+
+#Analyse again with and without interaction
+f_nointer<- mms(y=pheno_1, fixed= ~study_gr+sex+asa+bio+pred+age_gr+score_num+offset(log(N)), data=clinical, random = ~1|person_ID, method="nb", correlation=corAR1(form=~time_point|person_ID))
+
+
+#Results: Interaction, disease score:
+res=as.data.frame(get.fixed(f_inter, part="dist", vr.name="score_num"))
+res$p_adj <- p.adjust(res$pvalue, method="BH")
+res$bugs <- rownames(res)
+write.table(res, file = paste0(path, "Results/", "Pathway_interaction_disease.txt"), col.names=T, row.names=F)
+res_inter_disease <- res
+
+#Result: Disease score without interaction:
+res=as.data.frame(get.fixed(f_nointer, part="dist", vr.name="score_num"))
+res$p_adj <- p.adjust(res$pvalue, method="BH")
+res$bugs <- rownames(res)
+write.table(res, file = paste0(path, "Results/", "Pathway_disease.txt"), col.names=T, row.names=F)
+res_disease <- res
+
+
+
+##Investigate results!
+#Make histograms of p-values from the interaction analysis:
+ggplot(res_inter)+
+  geom_histogram(aes(x=pvalue), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+
+#Extract the significant in interaction term together with the disease score estimate
+sig <- res_inter %>% filter(p_adj<0.05)
+sig #None
+
+
+#Investigate results without interaction term: Disease score:
+ggplot(res_disease)+
+  geom_histogram(aes(x=pvalue), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Disease score")
+
+sig <- res_disease %>% filter(p_adj<0.05)
+sig 
+
+#Are they in a group? If yes, which one?
+for (c in 1: length(table(groups))){
+    cluster1 <- pathway1[,groups == c] 
+    for (i in 1:length(sig$bugs)){
+      if(sig$bugs[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }
+    }}
+
+#Plot distribution:
+temp <- cbind(clinical, pheno)
+temp$score_num1 <- ifelse(temp$score_num==1, "Remission", ifelse(temp$score_num==2, "Mild", ifelse(temp$score_num==3, "Moderate", "Severe")))
+temp$score_num1 <-factor(temp$score_num1, levels=c("Remission", "Mild", "Moderate", "Severe"))
+
+
+ggplot(data=temp)+
+  geom_boxplot(aes(x=score_num1, y=PWY.3841..folate.transformations.II/N, color=score_num1))+theme_classic()+xlab("")+ggtitle("Folate transformations II")+theme(legend.position="none")+ylab("Relative abundance")
+
+
+
+#Are there more with p-val <0.05 than expected by chance?
+#Interaction:
+sig <- res_inter %>% filter(pvalue<0.05)
+dim(sig)[1]
+binom.test(dim(sig)[1], dim(res_inter)[1], p=0.05)$p.value
+#Yes!
+
+#Disease score:
+sig <- res_disease %>% filter(pvalue<0.05)
+dim(sig)[1]
+binom.test(dim(sig)[1], dim(res_disease)[1], p=0.05)$p.value
+#No!
+
+#Top 5 from interaction:
+res_inter <- res_inter %>% arrange(pvalue)
+row.names(res_inter) <- NULL 
+res_inter[1:5, ]
+
+test <- res_inter$bugs[1:5]
+test
+#Are they in a group? If yes, which one?
+for (c in 1: length(table(groups))){
+    cluster1 <- pathway1[,groups == c] 
+    for (i in 1:length(test)){
+      if(test[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }}
+        }
+
+```
+
+
+# Test the association between paraclinical disease score and pathways
+
+Analysis of pathways and faecal calprotectin:
+```{r}
+#Model the pathway counts
+pathway_meta_sub <- pathway_meta %>% filter(!is.na(f_cal_current))
+pheno <- pathway_meta_sub[,reps]
+
+#Is variance higher than the mean? 
+mean(apply(pheno, 2, FUN=mean))
+mean(apply(pheno, 2, FUN=stats::var))
+#The variance is higher than the mean! Use NB
+
+#Is there zero-inflation?
+mean(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+sd(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+#On average, 0.6% of samples have zeros. No zero-inflation!
+
+N <- pathway_meta_sub$rdepth
+person_ID <- as.factor(pathway_meta_sub$person_ID)
+sex <-  as.factor(pathway_meta_sub$sex)
+age_gr <-  as.factor(pathway_meta_sub$age_gr)
+study_gr <-  as.factor(pathway_meta_sub$study_gr)
+asa <-  as.factor(pathway_meta_sub$asa)
+bio <-  as.factor(pathway_meta_sub$bio)
+pred <-  as.factor(pathway_meta_sub$pred_total)
+fcal <- log(pathway_meta_sub$fcal+1)
+time_point <- pathway_meta_sub$time_point
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, fcal, N, time_point)
+
+#Test using NB:
+f_inter <- mms(y=pheno, fixed= ~study_gr+sex+asa+bio+pred+ age_gr*fcal + offset(log(N)), data=clinical, random = ~1|person_ID, method="nb", correlation=corAR1(form=~time_point|person_ID))
+
+#Find taxa with significant (p<0.05) interaction. 
+res_inter=as.data.frame(get.fixed(f_inter, part="dist", vr.name="age_gr2:fcal"))
+res_inter$bugs <- rownames(res_inter)
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+write.table(res_inter, file = paste0(path, "Results/", "Fcal_Pathway_interaction.txt"), col.names=T, row.names=F)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+
+#Divide dataset into with and witout interaction:
+pheno_1 <- pheno[, setdiff(colnames(pheno), rownames(res_inter_sig))]
+
+#Analyse again with and without interaction
+f_nointer<- mms(y=pheno_1, fixed= ~study_gr+sex+asa+bio+pred+age_gr+fcal+offset(log(N)), data=clinical, random = ~1|person_ID, method="nb", correlation=corAR1(form=~time_point|person_ID))
+
+
+#Results: Interaction, disease score:
+res=as.data.frame(get.fixed(f_inter, part="dist", vr.name="fcal"))
+res$p_adj <- p.adjust(res$pvalue, method="BH")
+res$bugs <- rownames(res)
+write.table(res, file = paste0(path, "Results/", "Fcal_Pathway_interaction_disease.txt"), col.names=T, row.names=F)
+res_inter_disease <- res
+
+#Result: Disease score without interaction:
+res=as.data.frame(get.fixed(f_nointer, part="dist", vr.name="fcal"))
+res$p_adj <- p.adjust(res$pvalue, method="BH")
+res$bugs <- rownames(res)
+write.table(res, file = paste0(path, "Results/", "Fcal_Pathway_disease.txt"), col.names=T, row.names=F)
+res_disease <- res
+
+
+##Investigate results!
+#Make histograms of p-values from the interaction analysis:
+ggplot(res_inter)+
+  geom_histogram(aes(x=pvalue), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+
+#Extract the significant in interaction term together with the disease score estimate
+sig <- res_inter %>% filter(p_adj<0.05)
+sig #None!
+
+#Investigate results without interaction term: Disease score:
+ggplot(res_disease)+
+  geom_histogram(aes(x=pvalue), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Disease score")
+
+sig <- res_disease %>% filter(p_adj<0.05)
+sig #None
+
+#Are there more with p-val <0.05 than expected by chance?
+sig <- res_inter %>% filter(pvalue<0.05)
+dim(sig)[1]
+binom.test(dim(sig)[1], dim(res_inter)[1], p=0.05)$p.value
+#No..
+
+sig <- res_disease %>% filter(pvalue<0.05)
+dim(sig)[1]
+binom.test(dim(sig)[1], dim(res_disease)[1], p=0.05)$p.value
+#There are more with p-val <0.05 than expected!!
+
+
+#Top 5 disease:
+res_disease <- res_disease %>% arrange(pvalue)
+row.names(res_disease) <- NULL 
+res_disease[1:5, ]
+
+test <- res_disease$bugs[1:5]
+test
+#Are they in a group? If yes, which one?
+for (c in 1: length(table(groups))){
+    cluster1 <- pathway1[,groups == c] 
+    for (i in 1:length(test)){
+      if(test[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }
+    }   }
+```
+
+
+# Cluster ECs based on correlation
+
+Test the EC groups. Here, I only have relative abundance data. Therefore, it will be modelled using gaussian and not negative binomial distributions. 
+
+The number of ECs to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+EC_1 <- EC[,-c(1)]
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(EC_1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+par(mfrow=c(1,1))
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #107 different groups 
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+for (c in non.singles){
+    cluster1 <- EC_1[,groups == c]
+    plot(cluster1, main=c)
+}
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- EC_1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+#These are the pathways in the different clusters:
+for (c in 1: length(table(groups))){
+          cluster1 <- EC_1[,groups == c] 
+          print(c)
+          print(names(cluster1))
+        }
+#NULL means that there is only one pathway in the cluster
+
+```
+
+# Test the association between clinical disease score and ECs
+
+Analysis of EC and clinical disease score:
+```{r}
+#Model the pathway counts - only the representatives
+EC_meta_sub <- EC_meta %>% filter(!is.na(score))
+pheno <- EC_meta_sub[,reps] #Only the representatives
+
+#Is it gaussian?
+for (i in colnames(pheno)[1:5]){
+  p <- ggplot(pheno)+
+    geom_histogram(aes_string(x=i), bins=30)+ggtitle(i)
+  print(p)
+}
+
+for (i in colnames(pheno)[1:5]){
+  test <- asin(sqrt(pheno[, i]))
+  p <- ggplot()+
+    geom_histogram(aes_string(x=test), bins=30)+ggtitle(i)
+  print(p)
+}
+#The arcsine square root transformation might overall be a better fit
+
+#Is there zero-inflation?
+mean(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+sd(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1])) 
+#On average, 0.3% of samples have zeros. No zero-inflation!
+
+person_ID <- as.factor(EC_meta_sub$person_ID)
+sex <-  as.factor(EC_meta_sub$sex)
+age_gr <-  as.factor(EC_meta_sub$age_gr)
+study_gr <-  as.factor(EC_meta_sub$study_gr)
+asa <-  as.factor(EC_meta_sub$asa)
+bio <-  as.factor(EC_meta_sub$bio)
+pred <-  as.factor(EC_meta_sub$pred_total)
+score_num <- as.numeric(EC_meta_sub$score_num)
+time_point <- as.numeric(EC_meta_sub$time_point)
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, score_num, time_point)
+
+#Test using linear mixed models:
+#Random intercept -> gaussian:
+f1_score <- data.frame()
+f1_inter <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr*score_num, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["score_num",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score <- rbind(f1_score, df_score)
+  #Extract information on interaction term
+  df_inter <- t(as.data.frame(coef["age_gr2:score_num",]))
+  row.names(df_inter) <- as.character(variable_name)
+  f1_inter <- rbind(f1_inter, df_inter)
+}
+
+#Adjusted p-value:
+f1_score$padj <- p.adjust(f1_score$`p-value`, method="BH")
+f1_inter$padj <- p.adjust(f1_inter$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score, file = paste0(path, "Results/", "EC_interaction_disease.txt"), col.names=T)
+write.table(f1_inter, file = paste0(path, "Results/", "EC_interaction.txt"), col.names=T)
+
+#Which EC had significant interaction?
+inter_sig <- f1_inter %>%filter(padj<0.05)
+inter_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_inter)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_inter %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_inter)[1], p=0.05)$p.value
+#Yes!
+
+#Top 5 with lowest p-value:
+sig <- sig %>% arrange(`p-value`)
+sig[1:5, ]
+
+test <- row.names(sig)[1:5]
+test
+#Are they in a group? If yes, which one?
+for (c in 1: length(table(groups))){
+    cluster1 <- EC_1[,groups == c] 
+    for (i in 1:length(test)){
+      if(test[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }}
+}
+
+#Test without age interaction then:
+f1_score_2 <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr+score_num, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["score_num",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score_2 <- rbind(f1_score_2, df_score)
+
+}
+
+#Adjusted p-value:
+f1_score_2$padj <- p.adjust(f1_score_2$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score_2, file = paste0(path, "Results/", "EC_disease.txt"), col.names=T)
+
+#Which EC had significant disease score?
+disease_sig <- f1_score_2 %>%filter(padj<0.05)
+disease_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_score_2)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_score_2 %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_score_2)[1], p=0.05)$p.value
+#No!
+```
+
+# Test the association between paraclinical disease score and ECs
+
+Analysis of ECs and faecal calprotectin:
+```{r}
+#Model the pathway counts - only the representatives
+EC_meta_sub <- EC_meta %>% filter(!is.na(f_cal_current))
+pheno <- EC_meta_sub[,reps] #Only the representatives
+
+person_ID <- as.factor(EC_meta_sub$person_ID)
+sex <-  as.factor(EC_meta_sub$sex)
+age_gr <-  as.factor(EC_meta_sub$age_gr)
+study_gr <-  as.factor(EC_meta_sub$study_gr)
+asa <-  as.factor(EC_meta_sub$asa)
+bio <-  as.factor(EC_meta_sub$bio)
+pred <-  as.factor(EC_meta_sub$pred_total)
+fcal <- as.numeric(EC_meta_sub$f_cal_current) #Not transformed! Because of LMM
+time_point <- as.numeric(EC_meta_sub$time_point)
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, fcal, time_point)
+
+#Test using linear mixed models:
+#Random intercept -> gaussian:
+f1_score <- data.frame()
+f1_inter <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr*fcal, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["fcal",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score <- rbind(f1_score, df_score)
+  #Extract infromation on interaction term
+  df_inter <- t(as.data.frame(coef["age_gr2:fcal",]))
+  row.names(df_inter) <- as.character(variable_name)
+  f1_inter <- rbind(f1_inter, df_inter)
+}
+
+#Adjusted p-value:
+f1_score$padj <- p.adjust(f1_score$`p-value`, method="BH")
+f1_inter$padj <- p.adjust(f1_inter$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score, file = paste0(path, "Results/", "Paraclinical_EC_interaction_disease.txt"), col.names=T)
+write.table(f1_inter, file = paste0(path, "Results/", "Paraclinical_EC_interaction.txt"), col.names=T)
+
+#Which EC had significant interaction?
+inter_sig <- f1_inter %>%filter(padj<0.05)
+inter_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_inter)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_inter %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_inter)[1], p=0.05)$p.value
+#No!
+
+
+#Test without age interaction then:
+f1_score_2 <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr+fcal, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["fcal",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score_2 <- rbind(f1_score_2, df_score)
+
+}
+
+#Adjusted p-value:
+f1_score_2$padj <- p.adjust(f1_score_2$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score_2, file = paste0(path, "Results/", "Paraclinical_EC_disease.txt"), col.names=T)
+
+
+#Which EC had significant disease score?
+disease_sig <- f1_score_2 %>%filter(padj<0.05)
+disease_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_score_2)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_score_2 %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_score_2)[1], p=0.05)$p.value
+#No!
+```
+
+# Cluster KOs based on correlation
+
+Test the KO groups. Here, I only have relative abundance data. Therefore, it will be modelled using gaussian and not negative binomial distributions. 
+
+The number of KOs to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+KO_1 <- KO[,-c(1)]
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(KO_1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+par(mfrow=c(1,1))
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #118 different groups 
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+for (c in non.singles){
+    cluster1 <- KO_1[,groups == c]
+    plot(cluster1, main=c)
+}
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- KO_1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+#These are the pathways in the different clusters:
+for (c in 1: length(table(groups))){
+          cluster1 <- KO_1[,groups == c] 
+          print(c)
+          print(names(cluster1))
+        }
+#NULL means that there is only one pathway in the cluster
+
+```
+
+# Test the association between clinical disease score and KOs
+
+Analysis of KO and clinical disease score:
+```{r}
+#Model the pathway counts - only the representatives
+KO_meta_sub <- KO_meta %>% filter(!is.na(score))
+pheno <- KO_meta_sub[,reps] #Only the representatives
+
+#Is it gaussian?
+for (i in colnames(pheno)[1:5]){
+  p <- ggplot(pheno)+
+    geom_histogram(aes_string(x=i), bins=30)+ggtitle(i)
+  print(p)
+}
+
+for (i in colnames(pheno)[1:5]){
+  test <- asin(sqrt(pheno[, i]))
+  p <- ggplot()+
+    geom_histogram(aes_string(x=test), bins=30)+ggtitle(i)
+  print(p)
+}
+#The arcsine square root transformation might overall be a better fit
+
+#Is there zero-inflation?
+mean(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+sd(apply(pheno, 2, function(x) sum(x==0)/dim(pheno)[1]))
+#On average, 1% of samples have zeros. No zero-inflation!
+
+person_ID <- as.factor(KO_meta_sub$person_ID)
+sex <-  as.factor(KO_meta_sub$sex)
+age_gr <-  as.factor(KO_meta_sub$age_gr)
+study_gr <-  as.factor(KO_meta_sub$study_gr)
+asa <-  as.factor(KO_meta_sub$asa)
+bio <-  as.factor(KO_meta_sub$bio)
+pred <-  as.factor(KO_meta_sub$pred_total)
+score_num <- as.numeric(KO_meta_sub$score_num)
+time_point <- as.numeric(KO_meta_sub$time_point)
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, score_num, time_point)
+
+#Test using linear mixed models:
+#Random intercept -> gaussian:
+f1_score <- data.frame()
+f1_inter <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr*score_num, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["score_num",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score <- rbind(f1_score, df_score)
+  #Extract infromation on interaction term
+  df_inter <- t(as.data.frame(coef["age_gr2:score_num",]))
+  row.names(df_inter) <- as.character(variable_name)
+  f1_inter <- rbind(f1_inter, df_inter)
+}
+
+#Adjusted p-value:
+f1_score$padj <- p.adjust(f1_score$`p-value`, method="BH")
+f1_inter$padj <- p.adjust(f1_inter$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score, file = paste0(path, "Results/", "KO_interaction_disease.txt"), col.names=T)
+write.table(f1_inter, file = paste0(path, "Results/", "KO_interaction.txt"), col.names=T)
+
+#Which EC had significant interaction?
+inter_sig <- f1_inter %>%filter(padj<0.05)
+inter_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_inter)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_inter %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_inter)[1], p=0.05)$p.value
+#No!
+
+
+#Test without age interaction then:
+f1_score_2 <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr+score_num, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["score_num",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score_2 <- rbind(f1_score_2, df_score)
+
+}
+
+#Adjusted p-value:
+f1_score_2$padj <- p.adjust(f1_score_2$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score_2, file = paste0(path, "Results/", "KO_disease.txt"), col.names=T)
+
+
+#Which EC had significant disease score?
+disease_sig <- f1_score_2 %>%filter(padj<0.05)
+disease_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_score_2)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_score_2 %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_score_2)[1], p=0.05)$p.value
+#No!
+```
+
+# Test the association between paraclinical disease score and KOs
+
+Analysis of KOs and faecal calprotectin:
+```{r}
+#Model the pathway counts - only the representatives
+KO_meta_sub <- KO_meta %>% filter(!is.na(f_cal_current))
+pheno <- KO_meta_sub[,reps] #Only the representatives
+
+person_ID <- as.factor(KO_meta_sub$person_ID)
+sex <-  as.factor(KO_meta_sub$sex)
+age_gr <-  as.factor(KO_meta_sub$age_gr)
+study_gr <-  as.factor(KO_meta_sub$study_gr)
+asa <-  as.factor(KO_meta_sub$asa)
+bio <-  as.factor(KO_meta_sub$bio)
+pred <-  as.factor(KO_meta_sub$pred_total)
+fcal <- as.numeric(KO_meta_sub$f_cal_current) #Not transformed! Because of LMM
+time_point <- as.numeric(KO_meta_sub$time_point)
+
+clinical = cbind.data.frame(person_ID, sex, age_gr, study_gr,asa, bio, pred, fcal, time_point)
+
+#Test using linear mixed models:
+#Random intercept -> gaussian:
+f1_score <- data.frame()
+f1_inter <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr*fcal, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["fcal",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score <- rbind(f1_score, df_score)
+  #Extract infromation on interaction term
+  df_inter <- t(as.data.frame(coef["age_gr2:fcal",]))
+  row.names(df_inter) <- as.character(variable_name)
+  f1_inter <- rbind(f1_inter, df_inter)
+}
+
+#Adjusted p-value:
+f1_score$padj <- p.adjust(f1_score$`p-value`, method="BH")
+f1_inter$padj <- p.adjust(f1_inter$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score, file = paste0(path, "Results/", "Paraclinical_KO_interaction_disease.txt"), col.names=T)
+write.table(f1_inter, file = paste0(path, "Results/", "Paraclinical_KO_interaction.txt"), col.names=T)
+
+#Which KO had significant interaction?
+inter_sig <- f1_inter %>%filter(padj<0.05)
+inter_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_inter)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_inter %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_inter)[1], p=0.05)$p.value
+#No!
+
+
+#Test without age interaction then:
+f1_score_2 <- data.frame()
+for (i in 1:length(pheno)){
+  variable <- asin(sqrt(pheno[,i]))
+  clinical$variable <- variable
+  variable_name <- colnames(pheno)[i]
+  lme_cer <- lme(variable ~ study_gr+sex+asa+bio+pred+age_gr+fcal, random=~1|person_ID, data=clinical, correlation = corAR1(form=~time_point|person_ID))
+
+  coef <- summary(lme_cer)$tTable
+  #Extract disease score information
+  df_score <- t(as.data.frame(coef["fcal",]))
+  row.names(df_score) <- as.character(variable_name)
+  f1_score_2 <- rbind(f1_score_2, df_score)
+
+}
+
+#Adjusted p-value:
+f1_score_2$padj <- p.adjust(f1_score_2$`p-value`, method="BH")
+
+#Save results:
+write.table(f1_score_2, file = paste0(path, "Results/", "Paraclinical_KO_disease.txt"), col.names=T)
+
+
+#Which KO had significant disease score?
+disease_sig <- f1_score_2 %>%filter(padj<0.05)
+disease_sig
+#None!
+
+#What is the distribution of p-values
+ggplot(f1_score_2)+
+  geom_histogram(aes(x=`p-value`), bins=30, breaks = seq(0, 1, by=1/30), color="black", fill = "lightblue")+
+  theme_classic()+ xlab("p-value")+ylab("Count")+ggtitle("Interaction term")
+
+#Are there more with p<0.05 than expected?:
+sig <- f1_score_2 %>%filter(`p-value`<0.05)
+binom.test(dim(sig)[1], dim(f1_score_2)[1], p=0.05)$p.value
+#No!
+```
+

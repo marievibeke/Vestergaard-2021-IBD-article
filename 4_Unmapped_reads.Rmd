@@ -1,0 +1,304 @@
+---
+title: "Investigation of the proportion of unmappped reads"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Load in packages and data
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(caret)
+library(phyloseq)
+library(vegan)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(RCurl)
+library(MuMIn)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+Read in data:
+```{r echo=T, message=F, error=F, warning=F}
+#Meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Alpha diversity:
+alpha_div <- read_delim(file=paste0(path, "humann3_processed_output/processed_tables/", "AlphaDiv_relab.txt"), delim="\t")
+alpha_div <- merge(alpha_div, meta, by.x="J_ID", by.y="J_ID")
+
+#Phyloseq objects:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered2.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered2.rds"))
+ps_clr <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_clr_filtered2.rds"))
+```
+
+# Is alpha diversity associated with the proportion of unmapped reads?
+
+Visual inspection of association between alpha diversity and unmapped reads:
+```{r}
+
+ggplot(alpha_div)+
+  geom_point(aes(x=metaphlan_unknown, y=spec_nr_003), size=1)+theme_classic()+xlab("MetaPhlAn: Unmapped reads (%)") + ylab("Observed diveristy")
+ggplot(alpha_div)+
+  geom_point(aes(x=metaphlan_unknown, y=div_shannon_003), size=1)+theme_classic()+xlab("MetaPhlAn: Unmapped reads (%)") + ylab("Shannon index")
+ggplot(alpha_div)+
+  geom_point(aes(x=metaphlan_unknown, y=div_invsimpson_003), size=1)+theme_classic()+xlab("MetaPhlAn: Unmapped reads (%)") + ylab("Inv. Simpson")
+
+ggplot(alpha_div)+
+  geom_point(aes(x=path_unmapped*100, y=spec_nr_003), size=1)+theme_classic()+xlab("HUMAnN: Unmapped reads (%)") + ylab("Observed diveristy")
+ggplot(alpha_div)+
+  geom_point(aes(x=path_unmapped*100, y=div_shannon_003), size=1)+theme_classic()+xlab("HUMAnN: Unmapped reads (%)") + ylab("Shannon index")
+ggplot(alpha_div)+
+  geom_point(aes(x=path_unmapped*100, y=div_invsimpson_003), size=1)+theme_classic()+ xlab("HUMAnN: Unmapped reads (%)") + ylab("Inv. Simpson")
+
+```
+
+Investigate if alpha diversity and unmapped reads are normally distributed and transform if not!:
+```{r}
+#Chao1
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=spec_nr_003), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Observed diveristy")+ylab("Count")
+
+#Shannon
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=div_shannon_003), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Shannon diversity")+ylab("Count")
+
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=div_shannon_003^2), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Squared Shannon diversity")+ylab("Count")
+
+alpha_div$div_shannon_0032 <- (alpha_div$div_shannon_003)^2
+
+#InvSimpson
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=div_invsimpson_003), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Square rooted Inv. Simpson")+ylab("Count")
+
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=sqrt(div_invsimpson_003)), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Square rooted Inv. Simpson")+ylab("Count")
+
+alpha_div$div_invsimpson_0032 <- sqrt(alpha_div$div_invsimpson_003)
+
+#MetaPhlAn unmapped
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=metaphlan_unknown), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Unmapped MetaPlAn (%)")+ylab("Count")
+
+#HUMAnN unmapped
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=path_unmapped*100), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Unmapped HUMAnN (%)")+ylab("Count")
+
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=sqrt(path_unmapped*100)), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Square rooted unmapped HUMAnN (%)")+ylab("Count")
+
+alpha_div$path_unmapped2 <- sqrt(alpha_div$path_unmapped*100)
+
+```
+
+
+Test the association between alpha diversity and unmapped reads:
+```{r}
+#Linear mixed model of alpha div ~ unmapped reads:
+
+#Metaphlan unmapped
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+score+metaphlan_unknown"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+
+#HUMAnN unmapped
+divs <- c("spec_nr_003", "div_shannon_0032","div_invsimpson_0032")
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr+sex+asa+bio+pred_total+score+path_unmapped2"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", div), model)
+}
+summary(model_spec_nr_003)$tTable
+summary(model_div_shannon_0032)$tTable
+summary(model_div_invsimpson_0032)$tTable
+
+#Check diagnostic plots:
+qqnorm(residuals(model_spec_nr_003))
+qqnorm(residuals(model_div_shannon_0032))
+qqnorm(residuals(model_div_invsimpson_0032))
+plot(model_spec_nr_003)
+plot(model_div_shannon_0032)
+plot(model_div_invsimpson_0032)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_spec_nr_003)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_shannon_0032)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_div_invsimpson_0032)), bins=30)
+
+```
+
+# Does the beta diveristy associate with the proportion of unmapped reads?
+
+Test whether beta diversity associates with proportion of unmapped reads:
+Via PERMANOVA
+```{r}
+#Add unmapped to sample data
+row.names(alpha_div) <- alpha_div$J_ID
+sam <- sample_data(alpha_div)
+ps_relab <- phyloseq(otu_table(ps_relab), tax_table(ps_relab), sam)
+
+#Number of samples/participant must be even! Select samples with 4 datapoints
+ent <- subset_samples(ps_relab, !is.na(score))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>3)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_relab, J_ID %in% reduce$J_ID)
+reduce <- data.frame(sample_data(ps_reduced))
+
+#Permutation design:
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+#Test: Bray Curtis:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+score+metaphlan_unknown, data=reduce, method="bray", permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+score+path_unmapped, data=reduce, method="bray", permutations=perm2, by="margin")
+
+set.seed(1)
+#Test: Jaccard:
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+score+metaphlan_unknown, data=reduce, method="jaccard", binary=T, permutations=perm2, by="margin")
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr+sex+asa+bio+pred_total+score+path_unmapped, data=reduce, method="jaccard", binary=T, permutations=perm2, by="margin")
+
+
+#Aitchison
+ps_clr <- phyloseq(otu_table(ps_clr), tax_table(ps_clr), sam)
+ent <- subset_samples(ps_clr, !is.na(score))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>4)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce_ait <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced_ait <- subset_samples(ps_clr, J_ID %in% reduce_ait$J_ID)
+reduce_ait <- data.frame(sample_data(ps_reduced_ait))
+
+perm <- how(within=Within(type="none"), plots=Plots(strata=reduce_ait$person_ID, type="free"), nperm=999)
+perm2 <- how(within=Within(type="free"), plots=Plots(strata=reduce_ait$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+#Test unmapped reads
+adonis2(otu_table(ps_reduced_ait)~age_gr+study_gr+sex+asa+bio+pred_total+score+metaphlan_unknown, data=reduce_ait, method="euclidean", permutations=perm2, by="margin")
+adonis2(otu_table(ps_reduced_ait)~age_gr+study_gr+sex+asa+bio+pred_total+score+path_unmapped, data=reduce_ait, method="euclidean", permutations=perm2, by="margin")
+
+```
+
+# Does the disease severity associate with the ptoportion of unmapped reads?
+
+Test: Does the proportion of umapped reads associate with disease score: Investigated using linear mixed models
+```{r}
+
+#Discrete numeric disease score
+unmap <- c("metaphlan_unknown", "path_unmapped2")
+for (un in unmap){
+  form <- as.formula(paste0(un, "~study_gr+age_gr+sex+asa+bio+pred_total+score_num"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", un), model)
+}
+
+summary(model_metaphlan_unknown)$tTable
+summary(model_path_unmapped2)$tTable
+
+#Check diagnostics
+qqnorm(residuals(model_metaphlan_unknown))
+qqnorm(residuals(model_path_unmapped2))
+plot(model_metaphlan_unknown)
+plot(model_path_unmapped2)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_metaphlan_unknown)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_path_unmapped2)), bins=30)
+
+
+#Binary clinical disease score
+unmap <- c("metaphlan_unknown", "path_unmapped2")
+for (un in unmap){
+  form <- as.formula(paste0(un, "~study_gr+age_gr+sex+asa+bio+pred_total+score_binary"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", un), model)
+}
+
+summary(model_metaphlan_unknown)$tTable
+summary(model_path_unmapped2)$tTable
+
+#Check diagnostics
+qqnorm(residuals(model_metaphlan_unknown))
+qqnorm(residuals(model_path_unmapped2))
+plot(model_metaphlan_unknown)
+plot(model_path_unmapped2)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_metaphlan_unknown)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_path_unmapped2)), bins=30)
+
+
+#Numeric faecal calprotectin
+unmap <- c("metaphlan_unknown", "path_unmapped2")
+for (un in unmap){
+  form <- as.formula(paste0(un, "~study_gr+age_gr+sex+asa+bio+pred_total+f_cal_current"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", un), model)
+}
+
+summary(model_metaphlan_unknown)$tTable
+summary(model_path_unmapped2)$tTable
+
+#Check diagnostics
+qqnorm(residuals(model_metaphlan_unknown))
+qqnorm(residuals(model_path_unmapped2))
+plot(model_metaphlan_unknown)
+plot(model_path_unmapped2)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_metaphlan_unknown)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_path_unmapped2)), bins=30)
+
+#Binary paraclinical disease score
+unmap <- c("metaphlan_unknown", "path_unmapped2")
+for (un in unmap){
+  form <- as.formula(paste0(un, "~study_gr+age_gr+sex+asa+bio+pred_total+fcal_binary"))
+  model <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit,correlation=corAR1(form=~time_point|person_ID))
+  assign(paste0("model_", un), model)
+}
+
+summary(model_metaphlan_unknown)$tTable
+summary(model_path_unmapped2)$tTable
+
+#Check diagnostics
+qqnorm(residuals(model_metaphlan_unknown))
+qqnorm(residuals(model_path_unmapped2))
+plot(model_metaphlan_unknown)
+plot(model_path_unmapped2)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_metaphlan_unknown)), bins=30)
+ggplot()+
+  geom_histogram(aes(x=residuals(model_path_unmapped2)), bins=30)
+
+```
+

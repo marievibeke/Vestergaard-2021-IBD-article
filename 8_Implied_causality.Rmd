@@ -1,0 +1,1643 @@
+---
+title: "Implied causality"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Load in packages and data
+
+Load in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(tidyverse)
+library(caret)
+library(phyloseq)
+library(NBZIMM)
+library(vegan)
+library(metaMint)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(zCompositions)
+library(broom)
+library(MuMIn)
+path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+```
+
+Load in data:
+```{r}
+#Load in metaphlan dataframe
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_50mean_50var_zero.rds"))
+
+#Load in humann - OBS: first 3 columns: J_ID, UNMAPPED and UNINTEGRATED
+pathway <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "pathway_relab_unstratified_mean50_var50.txt")) 
+EC <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "EC_relab_unstratified_mean75_var75.txt"))
+KO <- read.delim(file=paste0(path, "humann3_processed_output/processed_tables/", "KO_relab_unstratified_mean75_var75.txt"))
+```
+
+```{r echo=T, message=F, error=F, warning=F}
+#Load in new metedata - with shifted disease score columns
+meta <-  read_delim(file = paste0(path, "metadata/Tilpasset_metadata_timelag.txt"), col_names = T, delim= "\t")
+meta <- as_tibble(meta)
+```
+
+```{r}
+#Calculate BMI
+meta <- meta %>% mutate(BMI = weight/(height/100)^2)
+
+#Make column with categorical disease scores
+meta <- meta %>% mutate(score_p = ifelse(pucai_current < 10, "remission", ifelse(pucai_current <= 34, "mild", ifelse(pucai_current<=64, "moderate", ifelse(pucai_current>64, "severe", "NA")))))
+meta <- meta %>% mutate(score_s = ifelse(sccai_current<3, "remission", ifelse(sccai_current<=5, "mild", ifelse(sccai_current<=11, "moderate", ifelse(sccai_current>11, "severe", "NA")))))
+meta <- meta %>% mutate(score = ifelse(is.na(score_p), score_s, ifelse(is.na(score_s), score_p, "NA")))
+meta$score <- factor(meta$score, levels = c("remission", "mild", "moderate", "severe", "NA"))
+meta$score_binary <- as.factor(ifelse(meta$score == "remission", 0, 1))
+
+meta <- meta %>% mutate(score_p = ifelse(pucai_future < 10, "remission", ifelse(pucai_future <= 34, "mild", ifelse(pucai_future<=64, "moderate", ifelse(pucai_future>64, "severe", "NA")))))
+meta <- meta %>% mutate(score_s = ifelse(sccai_future<3, "remission", ifelse(sccai_future<=5, "mild", ifelse(sccai_future<=11, "moderate", ifelse(sccai_future>11, "severe", "NA")))))
+meta <- meta %>% mutate(score_future = ifelse(is.na(score_p), score_s, ifelse(is.na(score_s), score_p, "NA")))
+meta$score_future <- factor(meta$score_future, levels = c("remission", "mild", "moderate", "severe", "NA"))
+meta$score_binary_future <- as.factor(ifelse(meta$score_future == "remission", 0, 1))
+
+meta$binary_fcal <- as.factor(ifelse(meta$f_cal_current<250, 0, 1))
+meta$binary_fcal_future <- as.factor(ifelse(meta$f_cal_future<250, 0, 1))
+
+#Modify data: factorial
+meta$sex <- as.factor(meta$sex)
+meta$age_gr <- as.factor(meta$age_gr)
+meta$person_ID <- as.factor(meta$person_ID)
+meta$study_gr <- as.factor(meta$study_gr)
+```
+
+# Is alpha diversity important for the following disease score?
+
+Initiate with testing alpha diversity!
+```{r echo=T, message=F, error=F, warning=F}
+#Read in alpha diversity and merge with metadata
+alpha_div <-  read_delim(file=paste0(path, "humann3_processed_output/processed_tables/", "AlphaDiv.txt"), delim="\t")
+alpha_div <- merge(alpha_div, meta, by.x="J_ID", by.y="J_ID")
+```
+
+```{r}
+#Logistic model: disease score (t) ~ disease score (t-1) + alpha div (t-1) + cov (t)
+
+alpha_div$Shannon2 <- (alpha_div$Shannon)^2 
+alpha_div$Simpson2 <- sqrt(alpha_div$InvSimpson)
+
+#With clinical disease score
+#Select optimizer, that reaches convergence
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Chao1+ (1|person_ID), data=alpha_div, family=binomial)
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon+ (1|person_ID), data=alpha_div, family=binomial)
+model3 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+InvSimpson+ (1|person_ID), data=alpha_div, family=binomial)
+model4 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon2+ (1|person_ID), data=alpha_div, family=binomial)
+model5 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Simpson2+ (1|person_ID), data=alpha_div, family=binomial)
+
+#The models did not converge! Investigate if a different optimizer can solve the problem
+#Fit with new optimizer - some still have the isSingular? problem..:
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Chao1+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="nlminbwrap"))
+model3 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+InvSimpson+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+model4 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon2+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="nlminbwrap"))
+model5 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Simpson2+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="nlminbwrap"))
+
+
+summary(model1)$coefficients
+summary(model2)$coefficients #isSingluar?
+summary(model3)$coefficients
+summary(model4)$coefficients #isSingluar?
+summary(model5)$coefficients #isSingluar?
+AIC(model1)
+AIC(model2)
+AIC(model3)
+AIC(model4)
+AIC(model5)
+#l_asa and score before are the best predicters! -> significant
+
+#With paraclinical disease score
+#Select optimizer, that eaches convergence
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Chao1+ (1|person_ID), data=alpha_div, family=binomial)
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon+ (1|person_ID), data=alpha_div, family=binomial)
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+InvSimpson+ (1|person_ID), data=alpha_div, family=binomial)
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon2+ (1|person_ID), data=alpha_div, family=binomial)
+model5 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Simpson2+ (1|person_ID), data=alpha_div, family=binomial)
+
+#The models 2-5 did not converge! Investigate if a different optimizer can solve the problem:
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+InvSimpson+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Shannon2+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+model5 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+Simpson2+ (1|person_ID), data=alpha_div, family=binomial, control=glmerControl(optimizer="bobyqa"))
+
+
+summary(model1)$coefficients
+summary(model2)$coefficients
+summary(model3)$coefficients
+summary(model4)$coefficients
+summary(model5)$coefficients
+#BMI and score are best predicters -> significant
+```
+Summary: Alpha diversity does not influence disease score at the following time point!
+
+# Which species are important for the future paraclinical remission/disease?
+
+Analysis of single species! Test the paraclinical remission/disease using logistic mixed models. 
+```{r message=FALSE, warning=FALSE}
+#Add new metadata to phyloseq
+meta_sam <- meta
+meta_sam <- sample_data(meta_sam)
+sample_names(meta_sam) <- meta$J_ID
+otu <- otu_table(ps_relab)
+tax <- tax_table(ps_relab)
+
+ps <- phyloseq(otu, tax, meta_sam)
+
+#Make dataframe to test selected species
+ps1 <- subset_samples(ps, !is.na(binary_fcal_future))
+specie_df1 <- as.data.frame(as.matrix(t(otu_table(ps1))))
+meta_df1 <- as.data.frame(sample_data(ps1))
+
+meta_new <- meta_df1
+meta_new <- as.data.frame(as.matrix(meta_new))
+meta_new$binary_fcal <- as.factor(meta_new$binary_fcal)
+meta_new$binary_fcal_future <- as.factor(meta_new$binary_fcal_future)
+meta_new$BMI <- as.numeric(meta_new$BMI)
+meta_new$age_gr <- as.factor(meta_new$age_gr)
+meta_new$pred_future <- as.factor(meta_new$pred_future)
+meta_new$asa_future <- as.factor(meta_new$asa_future)
+meta_new$l_asa_future <- as.factor(meta_new$l_asa_future)
+meta_new$aza_future <- as.factor(meta_new$aza_future)
+
+
+###Divide species into 2 groups: absent and present
+df_test2 <- specie_df1
+for (i in 1:dim(df_test2)[2]){
+  m1 <- mean(df_test2[,i])
+  for (j in 1:dim(df_test2)[1]){
+    df_test2[j,i] <- ifelse(df_test2[j,i]==0, "absent", "present")  
+  }
+  df_test2[,i] <- factor(df_test2[,i], levels=c("absent", "present"))
+}
+
+spec <- colnames(df_test2)
+df_test2$J_ID <- rownames(df_test2)
+df2 <- merge(meta_new, df_test2, by.x="J_ID", by.y="J_ID")
+
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Odoribacter_splanchnicus*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Gemmiger_formicilis*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Odoribacter_splanchnicus*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Gemmiger_formicilis*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model2)#no convergence
+
+#The results were not significant, when the models actually reaches convergence!!
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_pseudocatenulatum*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bacteroides_dorei*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Escherichia_coli*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+summary(model1) #isSingular?
+summary(model2)
+summary(model3) #isSingular?
+
+#Ended up detecting 3 - is this more than expected?
+binom.test(3, 75, p=0.05)$p.value
+#No!
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+spec_1 <- colnames(df_test2)[1:75]
+
+res <- data.frame()
+for (i in spec_1){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+
+#go with the padj<0.05 and refit to ensure convergence!:
+j <- 1
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df2, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+sex+BMI+asa_future+aza_future+l_asa_future+pred_future+s__Odoribacter_splanchnicus+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+sex+BMI+asa_future+aza_future+l_asa_future+pred_future+s__Alistipes_shahii+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="nlminbwrap"))
+summary(model2)
+
+#They were only significant because they didn't reach convergence!!
+
+
+#Try out the last 8 with p-val<0.05:
+spec2 <- spec1[!(spec1 %in%spec)]
+spec2
+j <- 1
+for (i in spec2){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df2, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_adolescentis+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_bifidum+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_longum+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model3)
+
+summary(model4)
+
+summary(model5)
+
+model6 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Clostridium_bolteae+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model6)
+
+model7 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Oscillibacter_sp_57_20+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model7)
+
+summary(model8)
+
+#Ended up detecting 8! Is this more than expected?
+binom.test(8, 75, p=0.05)$p.value
+#Yes!
+```
+
+Model everything again, but using the relative abundance instead of presence/absence:
+```{r message=FALSE, warning=FALSE}
+
+specie_df1$J_ID <- rownames(specie_df1)
+df3 <- merge(meta_new, specie_df1, by.x="J_ID", by.y="J_ID")
+
+spec <- colnames(df_test2)[1:75]
+
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+
+```
+
+```{r}
+
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test$bug){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Prevotella_copri*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Fusicatenibacter_saccharivorans *age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Parasutterella_excrementihominis*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+summary(model3)
+
+#None were significant after reaching convergence.. 
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit)
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1)
+#couldn't reach convergence! But! Also only 1/75 have pval<0.05
+binom.test(1, 75, p=0.05)$p.value
+
+```
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+spec_1 <- colnames(df_test2)[1:75]
+
+res <- data.frame()
+for (i in spec_1){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+
+#go with the padj<0.05: Refit to ensure convergence:
+j <- 1
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df3, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Anaeromassilibacillus_sp_An250+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Ruminococcus_bicirculans+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model3)
+
+model4 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Veillonella_dispar+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model4)
+
+model5 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Proteobacteria_bacterium_CAG_139+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model5)
+
+model6 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Akkermansia_muciniphila+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+summary(model6)
+
+#Nothing is significant after convergence is reached
+
+#Try out the last 3 with pval<0.05 and ensure convergence:
+spec2 <- spec1[!(spec1 %in%spec)]
+
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Collinsella_aerofaciens+(1|person_ID), family="binomial", data=df3)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Pseudoflavonifractor_sp_An184+(1|person_ID), family="binomial", data=df3)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Ruminococcus_bromii+(1|person_ID), family="binomial", data=df3)
+
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Pseudoflavonifractor_sp_An184+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="nlminbwrap"))
+summary(model2)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Ruminococcus_bromii+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="nlminbwrap"))
+summary(model3)
+
+
+#Ended up with 3/75 were significant:
+binom.test(3, 75, p=0.05)$p.value
+
+```
+
+# Which species are important for the future clinical remission/disease?
+
+Repeat analyses with clinical disease score instead:
+```{r}
+
+#Make dataframe to test selected species
+ps1 <- subset_samples(ps, !is.na(score_binary_future))
+specie_df1 <- as.data.frame(as.matrix(t(otu_table(ps1))))
+meta_df1 <- as.data.frame(sample_data(ps1))
+
+meta_new <- meta_df1
+meta_new <- as.data.frame(as.matrix(meta_new))
+meta_new$score_binary <- as.factor(meta_new$score_binary)
+meta_new$score_binary_future <- as.factor(meta_new$score_binary_future)
+meta_new$BMI <- as.numeric(meta_new$BMI)
+meta_new$age_gr <- as.factor(meta_new$age_gr)
+meta_new$pred_future <- as.factor(meta_new$pred_future)
+meta_new$asa_future <- as.factor(meta_new$asa_future)
+meta_new$l_asa_future <- as.factor(meta_new$l_asa_future)
+meta_new$aza_future <- as.factor(meta_new$aza_future)
+
+
+###Divide species into 2 groups: absent and present
+df_test2 <- specie_df1
+for (i in 1:dim(df_test2)[2]){
+  m1 <- mean(df_test2[,i])
+  for (j in 1:dim(df_test2)[1]){
+    df_test2[j,i] <- ifelse(df_test2[j,i]==0, "absent", "present")  
+  }
+  df_test2[,i] <- factor(df_test2[,i], levels=c("absent", "present"))
+}
+
+```
+
+```{r}
+spec <- colnames(df_test2)
+df_test2$J_ID <- rownames(df_test2)
+df2 <- merge(meta_new, df_test2, by.x="J_ID", by.y="J_ID")
+
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in spec){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bacteroides_xylanisolvens*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+model2 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Parabacteroides_distasonis*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Flavonifractor_plautii*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_siraeum*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+#Different optimizer to reach covergence!
+
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bacteroides_xylanisolvens*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Parabacteroides_distasonis*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Flavonifractor_plautii*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_siraeum*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+
+#The results were not significant, when the models actually reaches convergence!!
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Oscillibacter_sp_57_20*age_gr+(1|person_ID), data=df2, family = "binomial", na.action=na.omit)
+
+summary(model1) #isSingular?
+
+#Ended up detecting 1 - is this more than expected?
+binom.test(1, 75, p=0.05)$p.value
+#No!
+```
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+spec_1 <- colnames(df_test2)[1:75]
+
+res <- data.frame()
+for (i in spec_1){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+```
+
+```{r}
+#go with the padj<0.05, and ensure convergence!:
+j <- 1
+for (i in spec){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df2, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+model1 <- glmer(formula=score_binary_future~score_binary+sex+BMI+asa_future+aza_future+l_asa_future+pred_future+s__Bacteroides_dorei+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=score_binary_future~score_binary+sex+BMI+asa_future+aza_future+l_asa_future+pred_future+s__Parabacteroides_distasonis+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+
+model3 <- glmer(formula=score_binary_future~score_binary+sex+BMI+asa_future+aza_future+l_asa_future+pred_future+s__Clostridium_sp_CAG_58+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model3)
+
+#They were only significant because they didn't reach convergence!!
+
+#Try out the last 5 with p-value<0.05:
+spec2 <- spec1[!(spec1 %in%spec)]
+
+j <- 1
+for (i in spec2){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df2, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_sp_CAG_180+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1)
+
+summary(model2)
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Dialister_invisus+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model3)
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Escherichia_coli+(1|person_ID), family="binomial", data=df2, control=glmerControl(optimizer="bobyqa"))
+summary(model4)
+
+summary(model5)
+
+
+#Ended up detecting 5! Is this more than expected?
+binom.test(5, 75, p=0.05)$p.value
+#No..
+```
+
+Test the clinical disease score again, but modelled as relative abundance instead of presence/absence:
+```{r message=FALSE, warning=FALSE}
+specie_df1$J_ID <- rownames(specie_df1)
+df3 <- merge(meta_new, specie_df1, by.x="J_ID", by.y="J_ID")
+
+spec <- colnames(df_test2)[1:75]
+
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in spec){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+spec <- res_test1$bug
+j <- 1
+for (i in spec){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model2 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii*age_gr+(1|person_ID), data=df3, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1) #isSingular
+summary(model2) #convergence trouble
+summary(model3)
+summary(model4) #Convergence trouble
+
+
+#couldn't reach convergence! But! Also only 1/75 have pval<0.05
+binom.test(1, 75, p=0.05)$p.value
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+spec_1 <- colnames(df_test2)[1:75]
+
+res <- data.frame()
+for (i in spec_1){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df3, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+
+#go with the padj<0.05 and refit to ensure convergence:
+j <- 1
+for (i in spec){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df3, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_hallii+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1)
+
+summary(model2)
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Ruminococcus_bicirculans+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="nlminbwrap"))
+summary(model3)
+
+
+#Nothing is significant after convergence is reached
+
+#Try out the last 4 with pval<0.05:
+spec2 <- spec1[!(spec1 %in%spec)]
+
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_longum+(1|person_ID), family="binomial", data=df3)
+
+model2 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Anaerostipes_hadrus+(1|person_ID), family="binomial", data=df3)
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_rectale+(1|person_ID), family="binomial", data=df3)
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Faecalibacterium_prausnitzii+(1|person_ID), family="binomial", data=df3)
+
+#Different optimizer:
+model1 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Bifidobacterium_longum+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Anaerostipes_hadrus+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="Nelder_Mead"))
+
+model3 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Eubacterium_rectale+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="Nelder_Mead"))
+
+model4 <- glmer(formula=score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+s__Faecalibacterium_prausnitzii+(1|person_ID), family="binomial", data=df3, control=glmerControl(optimizer="nlminbwrap"))
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+
+
+#Ended up with 2/75 were significant:
+binom.test(2, 75, p=0.05)$p.value
+
+```
+
+# Which pathways are important for the future paraclinical remission/disease?
+
+Test pathways!
+Paraclinical remission/disease:
+
+The number of pathways to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+#Reduce the numer to be tested! Remove those with high positive correlation: Do this based on relative abundance!
+pathway1 <- pathway[, -c(1)] #remove the ID column
+
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(pathway1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #63 different groups
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations - the correlations are plotted in script nr. 7
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- pathway1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+pathway_meta <- merge(pathway, meta, by.x = "J_ID", by.y="J_ID")
+pathway_meta_sub <- pathway_meta %>% filter(!is.na(f_cal_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+
+```
+
+```{r}
+
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test$bug){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All must be refit with different optimizer!
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(ASPASN.PWY..superpathway.of.L.aspartate.and.L.asparagine.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(CITRULBIO.PWY..L.citrulline.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(COA.PWY.1..coenzyme.A.biosynthesis.II..mammalian.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7357..thiamin.formation.from.pyrithiamine.and.oxythiamine..yeast.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+res_test
+#One was significant after reaching convergence.. 
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+spec2 <- res_test1$bug[!(res_test1$bug %in% res_test$bug)]
+
+j <- 1
+for (i in spec2){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All but model1 and 10 must be refit!
+
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(HISDEG.PWY..L.histidine.degradation.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(HISTSYN.PWY..L.histidine.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PANTOSYN.PWY..pantothenate.and.coenzyme.A.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model5 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.1042..glycolysis.IV..plant.cytosol.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model6 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.1269..CMP.3.deoxy.D.manno.octulosonate.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model7 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7221..guanosine.ribonucleotides.de.novo.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model8 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.3001..superpathway.of.L.isoleucine.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model9 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY0.1319..CDP.diacylglycerol.biosynthesis.II)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model11 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.5973..cis.vaccenate.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model12 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.6123..inosine.5..phosphate.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model13 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7229..superpathway.of.adenosine.nucleotides.de.novo.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model14 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.6147..6.hydroxymethyl.dihydropterin.diphosphate.biosynthesis.I)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model15 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.6168..flavin.biosynthesis.III..fungi.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model16 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(RIBOSYN2.PWY..flavin.biosynthesis.I..bacteria.and.plants.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model16)
+
+
+#17/63 have pval<0.05 - one were significant with padj<0.05
+binom.test(17, 63, p=0.05)$p.value
+
+#Where they in groups with other?
+#Are they in a group? If yes, which one?
+for (c in 1: length(table(groups))){
+    cluster1 <- pathway1[,groups == c] 
+    for (i in 1:length(spec2)){
+      if(spec2[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }
+    }}
+for (c in 1: length(table(groups))){
+    cluster1 <- pathway1[,groups == c] 
+      if("ASPASN.PWY..superpathway.of.L.aspartate.and.L.asparagine.biosynthesis" %in% names(cluster1)){
+            print(names(cluster1))
+          }
+    }
+
+#Visualise the results:
+pathway_meta_sub$age_gr1 <- ifelse(pathway_meta_sub$age_gr==1, "Children", "Adults")
+pathway_meta_sub$age_gr1 <-factor(pathway_meta_sub$age_gr1, levels=c("Children", "Adults"))
+pathway_meta_sub$binary_fcal_future1 <- ifelse(pathway_meta_sub$binary_fcal_future==0, "Future remission", "Future relapse")
+pathway_meta_sub$binary_fcal_future1 <-factor(pathway_meta_sub$binary_fcal_future1, levels=c("Future remission", "Future relapse"))
+
+p <- ggplot(data=pathway_meta_sub)+geom_boxplot(aes(x=binary_fcal_future1, y=ASPASN.PWY..superpathway.of.L.aspartate.and.L.asparagine.biosynthesis, color=age_gr1))+ggtitle("Superpathway of L aspartate and L asparagine biosynthesis")+theme_classic()+xlab(" ")+ylab("Realtive abundance")+labs(color="Age group")+theme(plot.title = element_text(size = 8.8))
+p
+```
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+
+#go with the padj<0.05:
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(HSERMETANA.PWY..L.methionine.biosynthesis.III)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7111..pyruvate.fermentation.to.isobutanol..engineered.)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+
+#Different optimizer
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(HSERMETANA.PWY..L.methionine.biosynthesis.III)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1)
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7111..pyruvate.fermentation.to.isobutanol..engineered.)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+
+#Only one is significant after convergence is reached - and not significant with padj<0.05
+
+#Ended up with 1/63 were significant:
+binom.test(1, 63, p=0.05)$p.value
+
+```
+
+# Which pathways are important for the future clinical remission/disease?
+
+Repeat analyses with clinical disease score instead:
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+pathway_meta_sub <- pathway_meta %>% filter(!is.na(score_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test1$bug){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All must be refit!
+
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(CALVIN.PWY..Calvin.Benson.Bassham.cycle)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.7111..pyruvate.fermentation.to.isobutanol..engineered.)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.6936..seleno.amino.acid.biosynthesis)*age_gr+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+summary(model1)
+summary(model2)
+summary(model3)
+
+#One was significant after reaching convergence.. and not with padj
+
+#1/63 have pval<0.05 - one were significant with padj<0.05
+binom.test(1, 63, p=0.05)$p.value
+```
+
+```{r warning=FALSE}
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05) #None!
+
+spec1 <- unique(res_sig1$bug)
+
+#Investigate the one:
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.4981..L.proline.biosynthesis.II..from.arginine.)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit)
+
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(PWY.4981..L.proline.biosynthesis.II..from.arginine.)+(1|person_ID), data=pathway_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1)
+
+#Only one is significant after convergence is reached - and not significant with padj<0.05
+
+
+#Ended up with 1/63 were significant:
+binom.test(1, 63, p=0.05)$p.value
+```
+
+# Which ECs are important for the future paraclinical remission/disease?
+
+Test the EC:
+Paraclinical remission/disease:
+
+The number of pathways to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+#Reduce the numer to be tested! Remove those with high positive correlation: Do this based on relative abundance!
+EC1 <- EC[, -c(1)] #remove the ID column
+
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(EC1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #107 different groups
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations - they are plot in the script nr. 7
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- EC1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+EC_meta <- merge(EC, meta, by.x = "J_ID", by.y="J_ID")
+EC_meta_sub <- EC_meta %>% filter(!is.na(f_cal_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test$bug){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All must be refit!
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X1.1.1.290..4.phosphoerythronate.dehydrogenase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X1.4.1.13..Glutamate.synthase..NADPH.)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.4.2.14..Amidophosphoribosyltransferase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.4.99.17..S.adenosylmethionine.tRNA.ribosyltransferase.isomerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model5 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.1.33..Pantothenate.kinase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model6 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.7.7..DNA.directed.DNA.polymerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model7 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.1.3.11..Fructose.bisphosphatase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model8 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.5.99.6..Glucosamine.6.phosphate.deaminase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model9 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.6.3.31..Polyamine.transporting.ATPase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model10 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X4.1.1.70..Glutaconyl.CoA.decarboxylase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model11 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X4.2.1.47..GDP.mannose.4.6.dehydratase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #isSingular?
+
+model12 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.1.3.4..L.ribulose.5.phosphate.4.epimerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #No convergence!
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+summary(model5)
+summary(model6)
+summary(model7)
+summary(model8)
+summary(model9)
+summary(model10)
+summary(model11)
+summary(model12)
+
+#4 were significant after reaching convergence.. Only 2 with the same p-value
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+spec2 <- res_test1$bug[!(res_test1$bug %in% res_test$bug)]
+
+j <- 1
+for (i in spec2){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All but model 1, 2 and 7 must be refit!
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.4.1.129..Peptidoglycan.glycosyltransferase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.4.1.212..Hyaluronan.synthase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model5 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.7.24..Glucose.1.phosphate.thymidylyltransferase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model6 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.1.3.15..Histidinol.phosphatase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model8 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.1.3.3..Aldose.1.epimerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model9 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X4.2.1.46..dTDP.glucose.4.6.dehydratase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model10 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.1.3.2..UDP.glucose.4.epimerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model11 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.3.1.17..5.dehydro.4.deoxy.D.glucuronate.isomerase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model11)
+
+
+#15/107 have pval<0.05 - one were significant with padj<0.05
+binom.test(15, 107, p=0.05)$p.value
+
+
+#Do they belong to a cluster?
+test <- c(spec2, "X3.5.99.6..Glucosamine.6.phosphate.deaminase", "X4.2.1.47..GDP.mannose.4.6.dehydratase", "X1.1.1.290..4.phosphoerythronate.dehydrogenase", "X2.4.99.17..S.adenosylmethionine.tRNA.ribosyltransferase.isomerase")
+
+for (c in 1: length(table(groups))){
+    cluster1 <- EC1[,groups == c] 
+    for (i in 1:length(test)){
+      if(test[i] %in% names(cluster1)){
+            print(names(cluster1))
+          }}
+}
+
+#Visualise results:
+EC_meta_sub$age_gr1 <- ifelse(EC_meta_sub$age_gr==1, "Children", "Adults")
+EC_meta_sub$age_gr1 <-factor(EC_meta_sub$age_gr1, levels=c("Children", "Adults"))
+EC_meta_sub$binary_fcal_future1 <- ifelse(EC_meta_sub$binary_fcal_future==0, "Future remission", "Future relapse")
+EC_meta_sub$binary_fcal_future1 <-factor(EC_meta_sub$binary_fcal_future1, levels=c("Future remission", "Future relapse"))
+
+nice <- c("Glucosamine 6 phosphate deaminase", "GDP mannose 4 6 dehydratase")
+test <- c("X3.5.99.6..Glucosamine.6.phosphate.deaminase", "X4.2.1.47..GDP.mannose.4.6.dehydratase")
+
+for (i in 1:2){
+  p <- ggplot(data=EC_meta_sub)+geom_boxplot(aes_string(x="binary_fcal_future1", y=test[i], color="age_gr1"))+ggtitle(nice[i])+theme_classic()+xlab(" ")+ylab("Realtive abundance")+labs(color="Age group")
+  print(p)
+    
+}
+```
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug)
+
+#go with the padj<0.05:
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.1.33..Pantothenate.kinase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.7.7..DNA.directed.DNA.polymerase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.1.21.3..Type.I.site.specific.deoxyribonuclease)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+
+#Different optimizer:
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.1.33..Pantothenate.kinase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.7.7..DNA.directed.DNA.polymerase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.1.21.3..Type.I.site.specific.deoxyribonuclease)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1)
+summary(model2)
+summary(model3)
+
+#Only one is significant after convergence is reached - and not significant with padj<0.05
+
+
+#Ended up with 1/107 were significant:
+binom.test(1, 107, p=0.05)$p.value #-> unlikely to be this few!
+
+```
+
+# Which ECs are important for the future clinical remission/disease?
+
+Repeat analyses with clinical disease score instead:
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+EC_meta_sub <- EC_meta %>% filter(!is.na(score_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test1$bug){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All must be refit!
+
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X2.7.1.180..FAD.protein.FMN.transferase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))#isSingular?
+
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.1.3.11..Fructose.bisphosphatase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))#isSingular?
+
+model3 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.4.21.89..Signal.peptidase.I)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))#isSingular?
+
+model4 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.6.1.23..dUTP.diphosphatase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+model5 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X3.6.3.31..Polyamine.transporting.ATPase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model6 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X6.3.1.2..Glutamate..ammonia.ligase)*age_gr+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #isSingular?
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+summary(model5)
+summary(model6)
+
+#One was significant after reaching convergence.. and not with padj
+
+#4/107 have pval<0.05 - one were significant with padj<0.05
+binom.test(4, 107, p=0.05)$p.value
+```
+
+```{r message=FALSE, warning=FALSE}
+
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05) #None!
+
+spec1 <- unique(res_sig1$bug)
+
+#Investigate the one:
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.1.3.2..UDP.glucose.4.epimerase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit)
+  
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(X5.1.3.2..UDP.glucose.4.epimerase)+(1|person_ID), data=EC_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1)
+
+#Only one is significant after convergence is reached - and not significant with padj<0.05
+
+
+#Ended up with 1/107 were significant:
+binom.test(1, 107, p=0.05)$p.value
+```
+
+# Which KOs are important for the future paraclinical remission/disease?
+
+Test KO:
+Paraclinical remission/disease:
+
+The number of pathways to be tested are very large. Cluster those that are very correlated to test fewer!
+```{r}
+#Reduce the numer to be tested! Remove those with high positive correlation:
+KO1 <- KO[, -c(1)] #remove the ID column
+
+# Ward Hierarchical Clustering
+dissimilarity = 1-abs(cor(KO1, method='spearman')) # generate distance between columns so use trans
+d <- as.dist(dissimilarity) 
+
+fit <- hclust(d, method="ward.D")
+plot(fit, labels = F)
+
+# cut tree into groups by hight
+groups <- cutree(fit, h=0.25) # cut tree based on hight
+table(groups) #118 different groups
+
+rect.hclust(fit, h=0.25, border="red") # draw dendogram with red borders around the clusters
+        
+#Plot correlations - they are shown in the script nr. 7
+non.singles = as.numeric(names(table(groups)[table(groups) != 1]))
+
+# select cluster representative
+reps = vector()
+singles = as.numeric(names(table(groups)[table(groups) == 1]))
+for (n in singles){
+    reps[n] = names(groups[groups == n])
+}
+        
+for (c in non.singles){
+  cluster1 <- KO1[,groups == c] 
+  col_mean <- apply(cluster1, 2, mean)
+  reps[c] <-  names(sort(col_mean, decreasing=T))[1]
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+KO_meta <- merge(KO, meta, by.x = "J_ID", by.y="J_ID")
+KO_meta_sub <- KO_meta %>% filter(!is.na(f_cal_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02909..large.subunit.ribosomal.protein.L31)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02909..large.subunit.ribosomal.protein.L31)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+summary(model1) #not significant any more.. 
+
+
+#Look into pval<0.05 - not statistically significant, but perhaps indications!
+spec2 <- res_test1$bug[!(res_test1$bug %in% res_test$bug)]
+
+j <- 1
+for (i in spec2){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+
+#All but model 5 must be refit!
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K14652..3.4.dihydroxy.2.butanone.4.phosphate.synthase...GTP.cyclohydrolase.II..EC.4.1.99.12.3.5.4.25.)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K00767..nicotinate.nucleotide.pyrophosphorylase..carboxylating...EC.2.4.2.19.)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K21574..NO_NAME)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K03585..membrane.fusion.protein..multidrug.efflux.system)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model6 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K13043..NO_NAME)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa")) #isSingular?
+
+model7 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02965..small.subunit.ribosomal.protein.S19)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model8 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K11991..tRNA.specific.adenosine.deaminase)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap"))
+
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+summary(model5)
+summary(model6)
+summary(model7)
+summary(model8)
+
+
+#8/118 have pval<0.05 - one were significant with padj<0.05
+binom.test(8, 118, p=0.05)$p.value
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05)
+
+spec <- unique(res_sig$bug)
+spec1 <- unique(res_sig1$bug) #The same four!
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K00615..transketolase..EC.2.2.1.1.)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02013..iron.complex.transport.system.ATP.binding.protein..EC.3.6.3.34.)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02892..large.subunit.ribosomal.protein.L23)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K18220..NO_NAME)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+
+#Different optimizers:
+
+model1 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K00615..transketolase..EC.2.2.1.1.)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02013..iron.complex.transport.system.ATP.binding.protein..EC.3.6.3.34.)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02892..large.subunit.ribosomal.protein.L23)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model4 <- glmer(binary_fcal_future~binary_fcal+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K18220..NO_NAME)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #no convergence
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4) #no convergence
+
+```
+
+# Which KOs are important for the future clinical remission/disease?
+
+Repeat analyses with clinical disease score instead:
+```{r message=FALSE, warning=FALSE}
+#Make dataframe:
+KO_meta_sub <- KO_meta %>% filter(!is.na(score_future))
+
+
+##Model with relab:
+#First: check for interaction with age
+res_age <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age <- rbind(res_age, res_1)
+}
+```
+
+```{r}
+res_inter <- res_age[grep("age_gr2", row.names(res_age)),]
+res_inter$padj <- p.adjust(res_inter$`Pr(>|z|)`, method="BH")
+res_test <- res_inter %>% filter(padj<0.05)
+res_test
+res_test1 <- res_inter %>% filter(`Pr(>|z|)`<0.05)
+
+#Fit again to ensure convergence!
+j <- 1
+for (i in res_test1$bug){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+#All must be refit!
+
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K00554..tRNA..guanine.N1...methyltransferase)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02919..large.subunit.ribosomal.protein.L36)*age_gr+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+summary(model1)
+summary(model2)
+
+
+#1/118 have pval<0.05 - one were significant with padj<0.05
+binom.test(1, 118, p=0.05)$p.value
+```
+
+```{r message=FALSE, warning=FALSE}
+
+#Test without the interaction term!
+res <- data.frame()
+for (i in reps){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res <- rbind(res, res_1)
+}
+```
+
+```{r}
+res$padj <- p.adjust(res$`Pr(>|z|)`, method = "BH")
+res_sig1 <- res %>% filter(`Pr(>|z|)`<0.05)
+res_sig <- res %>% filter(padj<0.05) #The same!
+
+spec1 <- unique(res_sig1$bug)
+
+#Investigate:
+j <- 1
+for (i in spec1){
+  form <- paste0("score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(", i, ")+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=KO_meta_sub, family = "binomial", na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+}
+
+
+#All must be refit!
+
+model1 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02956..small.subunit.ribosomal.protein.S15)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #isSingular?
+
+model2 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K02913..large.subunit.ribosomal.protein.L33)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+
+model3 <- glmer(score_binary_future~score_binary+BMI+sex+asa_future+aza_future+l_asa_future+pred_future+scale(K03073..preprotein.translocase.subunit.SecE)+(1|person_ID), data=KO_meta_sub, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="nlminbwrap")) #isSingular?
+
+summary(model1)
+summary(model2)
+summary(model3)
+
+#None!
+
+#Ended up with 0/118 were significant:
+binom.test(0, 118, p=0.05)$p.value
+```
+
