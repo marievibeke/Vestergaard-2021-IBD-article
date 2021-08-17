@@ -1,0 +1,3405 @@
+---
+title: "Single taxa analyses of biopsies"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Read in packages and data    
+
+```{r echo=T, error=F, message=FALSE, warning=FALSE}
+
+set.seed(999)
+
+## PATHS
+main.dir = "C:/Users/Tom/Documents/10. semester/UC - biopsier/"
+
+
+#read libraries and data
+library(knitr)
+library(egg)
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(reshape)
+library(gridExtra)
+library(grid)
+library(readr)
+library(phyloseq)
+library(kableExtra)
+library(vegan)
+library(dplyr)
+library(ggpubr)
+library(ggthemes)
+library(plyr)
+library(dplyr)
+library(scales)
+library("ggpubr")
+library(reshape)
+library(reshape)
+library(gridBase)
+library(gridGraphics)
+library(Rtsne)
+library(ggrepel)
+library(RColorBrewer)
+library(psych)
+library(compositions)
+library(microbiome)
+library(rstatix)
+library(NBZIMM)
+library(pscl)
+
+
+## documenttation of colour scheme and variables 
+gg_color <- function(n) {
+
+    hues = seq(15, 375, length = n + 1)
+  
+    hcl(h = hues, l = 65, c = 100)[1:n]
+
+}
+mc_pal <- brewer.pal(6, "Greys")
+pal <- brewer.pal(8,"Paired")[-c(5,6)]
+pal_all <- pal[c(2,1,4,3,6,5)]
+mc_pal_all <- mc_pal[c(2,1,4,3,6,5)] # black/white
+mc_pal_diet <- mc_pal_all[-c(2,4,6)] # black/white
+pal_diet <- pal_all[-c(2,4,6)]
+
+
+```
+
+Data: 
+```{r LOAD MICROBIOME PROFILES, echo=TRUE}
+# this code block will 
+# - load the ps objetcs for analysis.
+
+    setwd(paste0( file.path( main.dir, "data/16S/data_processed")))
+    
+    ps_relab = readRDS("DATA.ps.raw_SampleFilter.relab_meta.modified.rds")
+ 
+    ps_count = readRDS( "DATA.ps.raw_SampleFilter_meta.modified.rds")
+
+    ps = readRDS("DATA.ps.raw.rds")
+    
+    meta_df = meta_df = sample_data(ps_relab)
+
+#Summarising data:
+dim(meta_df) 
+
+adults <- as_tibble(meta_df) %>% filter(age_gr == "Adult")
+children <- as_tibble(meta_df) %>% filter(age_gr == "Paediatric")
+
+a_merge <-  adults %>% dplyr::group_by(cpr) %>% dplyr::summarise(number=n())
+summary(a_merge)
+
+c_merge <-  children %>% dplyr::group_by(cpr) %>% dplyr::summarise(number=n())
+summary(c_merge)
+```
+
+
+```{r Evaluate variables as possible confounders - view variables, echo=TRUE}
+# this code block will 
+
+# VARIABLES OF INTEREST
+# -	Medication previsou
+# -	Study_group
+# -	Bmi, gender
+
+# check variables
+# BMI
+summary(sample_data(ps_relab)$bmi) # 2 NA
+hist(na.omit( meta_df$bmi), breaks = 30)
+
+# SEX
+summary(sample_data(ps_relab)$sex) # 
+
+# study group
+sample_data(ps_relab)$study_gr = as.factor(sample_data(ps_relab)$study_gr)
+
+levels(sample_data(ps_relab)$study_gr)[levels(sample_data(ps_relab)$study_gr)=="1"] ="G1"
+levels(sample_data(ps_relab)$study_gr)[levels(sample_data(ps_relab)$study_gr)=="2"] ="G2"
+levels(sample_data(ps_relab)$study_gr)
+
+levels(sample_data(ps_count)$study_gr)[levels(sample_data(ps_count)$study_gr)=="1"] ="G1"
+levels(sample_data(ps_count)$study_gr)[levels(sample_data(ps_count)$study_gr)=="2"] ="G2"
+levels(sample_data(ps_count)$study_gr)
+
+table(sample_data(ps_relab)$study_gr)
+table(sample_data(ps_count)$study_gr)
+
+# # medication
+sample_data(ps_count)$bio_0=as.factor(sample_data(ps_count)$bio_0)
+sample_data(ps_relab)$bio_0=as.factor(sample_data(ps_relab)$bio_0)
+table(sample_data(ps_relab)$bio_0, sample_data(ps_relab)$GI.location) 
+ #  c  r  s  t
+#  0 29 43 40 29
+#  1  7  7  7  7
+sample_data(ps_count)$previous_local=as.factor(sample_data(ps_count)$previous_local)
+sample_data(ps_relab)$previous_local=as.factor(sample_data(ps_relab)$previous_local)
+table(sample_data(ps_relab)$previous_local, sample_data(ps_relab)$GI.location) 
+#     c  r  s  t
+#  0 29 37 35 28
+#  1  7 13 12  8
+  
+sample_data(ps_count)$previous_pred=as.factor(sample_data(ps_count)$previous_pred)
+sample_data(ps_relab)$previous_pred=as.factor(sample_data(ps_relab)$previous_pred)
+table(sample_data(ps_relab)$previous_pred, sample_data(ps_relab)$GI.location)
+#    c  r  s  t
+#  0 31 44 42 31
+#  1  5  6  5  5
+sample_data(ps_count)$previous_asa=as.factor(sample_data(ps_count)$previous_asa)
+sample_data(ps_relab)$previous_asa=as.factor(sample_data(ps_relab)$previous_asa)
+table(sample_data(ps_relab)$previous_asa, sample_data(ps_relab)$GI.location)
+#      c  r  s  t
+#  0 21 28 29 21
+#  1 15 22 18 15
+sample_data(ps_count)$previous_aza=as.factor(sample_data(ps_count)$previous_aza)
+sample_data(ps_relab)$previous_aza=as.factor(sample_data(ps_relab)$previous_aza)
+table(sample_data(ps_relab)$previous_aza, sample_data(ps_relab)$GI.location)
+#      c  r  s  t
+#  0 28 39 37 29
+#  1  8 11 10  7
+
+
+## format disease scores
+# uceis
+sample_data(ps_relab)$uceis <- ordered(sample_data(ps_relab)$uceis, levels = 0:7,
+                              labels = c("0", "1", "2", "3","4", "5", "6", "7")) # conversion
+sample_data(ps_count)$uceis <- ordered(sample_data(ps_count)$uceis, levels = 0:7,
+                              labels = c("0", "1", "2", "3","4", "5", "6", "7")) # conversion
+
+# pucai_sccai *
+table(sample_data(ps_count)$pucai_sccai)
+sample_data(ps_relab)$pucai_sccai <- ordered(sample_data(ps_relab)$pucai_sccai, levels = c('remission','mild',  'moderate',     'severe'),
+                              labels = c('remission', 'mild',  'moderate',    'severe')) # conversion
+sample_data(ps_count)$pucai_sccai <- ordered(sample_data(ps_count)$pucai_sccai, levels = c('remission','mild',  'moderate',     'severe'),
+                              labels = c('remission', 'mild',  'moderate',    'severe')) # conversion
+sample_data(ps_count)$pucai_sccai
+
+# geb.g
+table(sample_data(ps_relab)$geb.g )
+table(sample_data(ps_count)$geb.g )
+# f_cal_0.g
+table(sample_data(ps_relab)$f_cal_0.g)
+table(sample_data(ps_count)$f_cal_0.g)
+
+## AGLOMERATE
+## USING SPECIES LEVEL PROFILES
+
+ps_relab_spe  = tax_glom(ps_relab, taxrank='Species', NArm=FALSE)
+ps_relab_spe
+ps_count_spe  = tax_glom(ps_count, taxrank='Species', NArm=FALSE)
+ps_count_spe
+
+```
+
+
+```{r prepare pc objects, echo=TRUE}
+
+
+# seperate data for location
+    
+    
+    # relab
+    sample_data(ps_relab_spe)$GI.location
+    ps_relab_spe_r = subset_samples(ps_relab_spe, GI.location == 'r' &  is.na(bmi) != TRUE )
+    ps_relab_spe_s = subset_samples(ps_relab_spe, GI.location == 's' &  is.na(bmi) != TRUE )
+    
+    ps_relab_spe_t = subset_samples(ps_relab_spe, GI.location == 't' &  is.na(bmi) != TRUE )
+    ps_relab_spe_c = subset_samples(ps_relab_spe, GI.location == 'c' &  is.na(bmi) != TRUE )
+
+    # counts
+    ps_count_spe_r = subset_samples(ps_count_spe, GI.location == 'r' &  is.na(bmi) != TRUE )
+    ps_count_spe_s = subset_samples(ps_count_spe, GI.location == 's' &  is.na(bmi) != TRUE)
+    
+    ps_count_spe_t = subset_samples(ps_count_spe, GI.location == 't' &  is.na(bmi) != TRUE)
+    ps_count_spe_c = subset_samples(ps_count_spe, GI.location == 'c'&  is.na(bmi) != TRUE)
+ 
+    
+```
+
+# Analyses of clinical disease score
+
+First: Analysis of clinical disease score: pucai_sccai
+
+```{r single species - pucai_sccai, echo=TRUE}
+
+# COUNT data prepare
+names(sample_data(ps_count_spe))
+
+sample_data(ps_count_spe)$N <- rowSums(otu_table(ps_count_spe)) # read counts, important to do this BEFORE filtering taxa.
+
+sample_data(ps_count_spe)$bmi
+
+
+# "pucai_sccai"  "geb.g" "uceis" "f_cal_0.g"
+sample_data(ps_count_spe)$pucai_sccai
+sample_data(ps_count_spe)$geb.g  # has 2 NA
+sample_data(ps_count_spe)$uceis # has 2 NA
+sample_data(ps_count_spe)$f_cal_0.g
+sum(is.na(sample_data(ps_count_spe)$f_cal_0.g)) # 19
+
+##*****************
+## pucai_sccai
+##*****************
+ps_count_pucai_sccai = subset_samples(ps_count_spe, is.na(bmi) != TRUE & is.na(pucai_sccai) != TRUE )
+
+ps_count_pucai_sccai = filter_taxa(ps_count_pucai_sccai, function(x) sum(x > 3) > (0.3*length(x)), TRUE)
+# 66 taxa
+#ps_count_pucai_sccai = filter_taxa(ps_count_pucai_sccai, function(x) mean(x) > 10, TRUE)
+
+sample_data(ps_count_pucai_sccai)$GI.location <- ordered(sample_data(ps_count_pucai_sccai)$GI.location, levels = c('r','s',  't',     'c'),
+                              labels = c('r','s',  't',     'c')) # conversion
+
+#sample_data(ps_count_pucai_sccai)$GI.location <- factor(sample_data(ps_count_pucai_sccai)$GI.location, levels = c('r','s',  't',     'c')) # not ordinal in model
+
+
+ N <- sample_data(ps_count_pucai_sccai)$N
+ person_ID <- as.factor(sample_data(ps_count_pucai_sccai)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_pucai_sccai)$sex)
+ asa <-  as.factor(sample_data(ps_count_pucai_sccai)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_pucai_sccai)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_pucai_sccai)$age_gr)
+ GI <-  sample_data(ps_count_pucai_sccai)$GI.location
+ 
+ score_num <- as.integer( sample_data(ps_count_pucai_sccai)$pucai_sccai)
+ 
+ ggplot()+
+    geom_histogram(aes(x=exp(score_num)))
+ 
+ # by default, R fits a series of polynomial functions to the levels of the variable if they are ordered. 
+ # The first is linear (.L), the second is quadratic (.Q), the third (if you had enough levels) would be cubic, etc. 
+# https://www.theanalysisfactor.com/regression-modelshow-do-you-know-you-need-a-polynomial/
+ 
+clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+pheno <-  as.data.frame(as.matrix((otu_table(ps_count_pucai_sccai)))) #No transformation
+
+f1 <- mms(y=pheno, fixed= ~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)))
+
+f1_failed <- c(1,2,5,11,17)
+
+res_inter <- as.data.frame(get.fixed(f1, part="dist", vr.name="score_num:GI.L"))
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+res_inter$part <- "NB"
+res_inter$bug <- row.names(res_inter)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+
+res_inter_zero <- as.data.frame(get.fixed(f1, part="zero", vr.name="score_num:GI.L"))
+res_inter_zero$p_adj <- p.adjust(res_inter_zero$pvalue, method="BH")
+res_inter_zero$part <- "ZI"
+res_inter_zero$bug <- row.names(res_inter_zero)
+res_inter_sig_zero <- res_inter_zero %>% filter(p_adj < 0.05)
+
+res1 <- rbind(res_inter_sig, res_inter_sig_zero)
+res1
+
+write.table(res1, file=paste0(main.dir, "results/Clinical_results_score_GI.txt"), col.names=T, row.names=F, sep="\t")
+res1_all <- rbind(res_inter, res_inter_zero)
+write.table(res1_all, file=paste0(main.dir, "results/Clinical_results_score_GI_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#These are those where GI location really matter to the phenotype. 
+#Split up by GI and refit the model, testing also age*disease score
+#There is then only one data point pr. patient! No need to include random intercept and correlation structure
+
+#Colon
+ps_count_c <- subset_samples(ps_count_pucai_sccai, GI.location=="c")
+
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f1_GI_c_count <- data.frame()
+f1_GI_c_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_c_count <- rbind(f1_GI_c_count, c1)
+   f1_GI_c_zero <- rbind(f1_GI_c_zero, z1)
+}
+
+f1_GI_c_count
+f1_GI_c_zero
+
+f1_GI_c_count$location <- "c"
+f1_GI_c_count$part <- "NB"
+f1_GI_c_zero$location <- "c"
+f1_GI_c_zero$part <- "ZI"
+
+#Rectum
+ps_count_r <- subset_samples(ps_count_pucai_sccai, GI.location=="r")
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_r)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f1_GI_r_count <- data.frame()
+f1_GI_r_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_r_count <- rbind(f1_GI_r_count, c1)
+   f1_GI_r_zero <- rbind(f1_GI_r_zero, z1)
+}
+
+f1_GI_r_count
+f1_GI_r_zero
+
+f1_GI_r_count$location <- "r"
+f1_GI_r_count$part <- "NB"
+f1_GI_r_zero$location <- "r"
+f1_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+ps_count_s <- subset_samples(ps_count_pucai_sccai, GI.location=="s")
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_s)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f1_GI_s_count <- data.frame()
+f1_GI_s_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_s_count <- rbind(f1_GI_s_count, c1)
+   f1_GI_s_zero <- rbind(f1_GI_s_zero, z1)
+}
+ 
+f1_GI_s_count
+f1_GI_s_zero
+
+f1_GI_s_count$location <- "s"
+f1_GI_s_count$part <- "NB"
+f1_GI_s_zero$location <- "s"
+f1_GI_s_zero$part <- "ZI"
+
+#Transversum:
+ps_count_t <- subset_samples(ps_count_pucai_sccai, GI.location=="t")
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_t)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f1_GI_t_count <- data.frame()
+f1_GI_t_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_t_count <- rbind(f1_GI_t_count, c1)
+   f1_GI_t_zero <- rbind(f1_GI_t_zero, z1)
+}
+ 
+f1_GI_t_count
+f1_GI_t_zero
+
+f1_GI_t_count$location <- "t"
+f1_GI_t_count$part <- "NB"
+f1_GI_t_zero$location <- "t"
+f1_GI_t_zero$part <- "ZI"
+
+res2 <- rbind(f1_GI_c_count, f1_GI_c_zero, f1_GI_r_count, f1_GI_r_zero, f1_GI_t_count, f1_GI_t_zero, f1_GI_s_count, f1_GI_s_zero)
+res2
+
+write.table(res2, file=paste0(main.dir, "results/Clinical_results_score_GI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+#For significant ASV: Try to fit within age groups! This can only be done without covariates to have power enough to fit the models
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+
+#Colon - children
+ps_count_c_c <- subset_samples(ps_count_c, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c_c)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_c_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_c)))) #No transformation
+
+f2_GI_c_c_count <- data.frame()
+f2_GI_c_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_c_count <- rbind(f2_GI_c_c_count, c1)
+   f2_GI_c_c_zero <- rbind(f2_GI_c_c_zero, z1)
+}
+ 
+f2_GI_c_c_count
+f2_GI_c_c_zero
+
+f2_GI_c_c_count$location <- "c"
+f2_GI_c_c_count$part <- "NB"
+f2_GI_c_c_zero$location <- "c"
+f2_GI_c_c_zero$part <- "ZI"
+f2_GI_c_c_count$age_gr <- "Children"
+f2_GI_c_c_zero$age_gr <- "Children"
+
+#Colon - adults:
+ps_count_c_a <- subset_samples(ps_count_c, age_gr=="Adult")
+ N <- sample_data(ps_count_c_a)$N
+ person_ID <- as.factor(sample_data(ps_count_c_a)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_c_a)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_a)))) #No transformation
+
+f2_GI_c_a_count <- data.frame()
+f2_GI_c_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_a_count <- rbind(f2_GI_c_a_count, c1)
+   f2_GI_c_a_zero <- rbind(f2_GI_c_a_zero, z1)
+}
+ 
+f2_GI_c_a_count
+f2_GI_c_a_zero
+
+f2_GI_c_a_count$location <- "c"
+f2_GI_c_a_count$part <- "NB"
+f2_GI_c_a_zero$location <- "c"
+f2_GI_c_a_zero$part <- "ZI"
+f2_GI_c_a_count$age_gr <- "Adults"
+f2_GI_c_a_zero$age_gr <- "Adults"
+
+#Rectum - children:
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_r_c <- subset_samples(ps_count_r, age_gr=="Paediatric")
+ N <- sample_data(ps_count_r_c)$N
+ person_ID <- as.factor(sample_data(ps_count_r_c)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_r_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r_c)))) #No transformation
+
+f2_GI_r_c_count <- data.frame()
+f2_GI_r_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_c_count <- rbind(f2_GI_r_c_count, c1)
+   f2_GI_r_c_zero <- rbind(f2_GI_r_c_zero, z1)
+}
+ 
+f2_GI_r_c_count
+f2_GI_r_c_zero
+
+f2_GI_r_c_count$location <- "r"
+f2_GI_r_c_count$part <- "NB"
+f2_GI_r_c_zero$location <- "r"
+f2_GI_r_c_zero$part <- "ZI"
+f2_GI_r_c_count$age_gr <- "Children"
+f2_GI_r_c_zero$age_gr <- "Children"
+
+#Rectum - adults:
+ps_count_r_a <- subset_samples(ps_count_r, age_gr=="Adult")
+ N <- sample_data(ps_count_r_a)$N
+ person_ID <- as.factor(sample_data(ps_count_r_a)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_r_a)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r_a)))) #No transformation
+
+f2_GI_r_a_count <- data.frame()
+f2_GI_r_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_a_count <- rbind(f2_GI_r_a_count, c1)
+   f2_GI_r_a_zero <- rbind(f2_GI_r_a_zero, z1)
+}
+ 
+f2_GI_r_a_count
+f2_GI_r_a_zero
+
+f2_GI_r_a_count$location <- "r"
+f2_GI_r_a_count$part <- "NB"
+f2_GI_r_a_zero$location <- "r"
+f2_GI_r_a_zero$part <- "ZI"
+f2_GI_r_a_count$age_gr <- "Adults"
+f2_GI_r_a_zero$age_gr <- "Adults"
+
+#Sigmoideum - children
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_s_c <- subset_samples(ps_count_s, age_gr=="Paediatric")
+ N <- sample_data(ps_count_s_c)$N
+ person_ID <- as.factor(sample_data(ps_count_s_c)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_s_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_c)))) #No transformation
+
+f2_GI_s_c_count <- data.frame()
+f2_GI_s_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_c_count <- rbind(f2_GI_s_c_count, c1)
+   f2_GI_s_c_zero <- rbind(f2_GI_s_c_zero, z1)
+}
+ 
+f2_GI_s_c_count
+f2_GI_s_c_zero
+
+f2_GI_s_c_count$location <- "s"
+f2_GI_s_c_count$part <- "NB"
+f2_GI_s_c_zero$location <- "s"
+f2_GI_s_c_zero$part <- "ZI"
+f2_GI_s_c_count$age_gr <- "Children"
+f2_GI_s_c_zero$age_gr <- "Children"
+
+#Sigmoideum - adults:
+ps_count_s_a <- subset_samples(ps_count_s, age_gr=="Adult")
+ N <- sample_data(ps_count_s_a)$N
+ person_ID <- as.factor(sample_data(ps_count_s_a)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_s_a)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_a)))) #No transformation
+
+f2_GI_s_a_count <- data.frame()
+f2_GI_s_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_a_count <- rbind(f2_GI_s_a_count, c1)
+   f2_GI_s_a_zero <- rbind(f2_GI_s_a_zero, z1)
+}
+ 
+f2_GI_s_a_count
+f2_GI_s_a_zero
+
+f2_GI_s_a_count$location <- "s"
+f2_GI_s_a_count$part <- "NB"
+f2_GI_s_a_zero$location <- "s"
+f2_GI_s_a_zero$part <- "ZI"
+f2_GI_s_a_count$age_gr <- "Adults"
+f2_GI_s_a_zero$age_gr <- "Adults"
+
+#Transversum - children:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_t_c <- subset_samples(ps_count_t, age_gr=="Paediatric")
+ N <- sample_data(ps_count_t_c)$N
+ person_ID <- as.factor(sample_data(ps_count_t_c)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_t_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_c)))) #No transformation
+
+f2_GI_t_c_count <- data.frame()
+f2_GI_t_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_c_count <- rbind(f2_GI_t_c_count, c1)
+   f2_GI_t_c_zero <- rbind(f2_GI_t_c_zero, z1)
+}
+ 
+f2_GI_t_c_count
+f2_GI_t_c_zero
+
+f2_GI_t_c_count$location <- "t"
+f2_GI_t_c_count$part <- "NB"
+f2_GI_t_c_zero$location <- "t"
+f2_GI_t_c_zero$part <- "ZI"
+f2_GI_t_c_count$age_gr <- "Children"
+f2_GI_t_c_zero$age_gr <- "Children"
+
+#Transversum - adults:
+ps_count_t_a <- subset_samples(ps_count_t, age_gr=="Adult")
+ N <- sample_data(ps_count_t_a)$N
+ person_ID <- as.factor(sample_data(ps_count_t_a)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_t_a)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_a)))) #No transformation
+
+f2_GI_t_a_count <- data.frame()
+f2_GI_t_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_a_count <- rbind(f2_GI_t_a_count, c1)
+   f2_GI_t_a_zero <- rbind(f2_GI_t_a_zero, z1)
+}
+ 
+f2_GI_t_a_count
+f2_GI_t_a_zero
+
+f2_GI_t_a_count$location <- "t"
+f2_GI_t_a_count$part <- "NB"
+f2_GI_t_a_zero$location <- "t"
+f2_GI_t_a_zero$part <- "ZI"
+f2_GI_t_a_count$age_gr <- "Adults"
+f2_GI_t_a_zero$age_gr <- "Adults"
+
+#Combine all results and save them!
+res2_1 <- rbind(f2_GI_c_c_count, f2_GI_c_c_zero,f2_GI_c_a_count, f2_GI_c_a_zero, f2_GI_r_c_count, f2_GI_r_c_zero,f2_GI_r_a_count, f2_GI_r_a_zero,f2_GI_s_c_count, f2_GI_s_c_zero,f2_GI_s_a_count, f2_GI_s_a_zero,f2_GI_t_c_count, f2_GI_t_c_zero,f2_GI_t_a_count, f2_GI_t_a_zero)
+res2_1
+
+write.table(res2_1, file=paste0(main.dir, "results/Clinical_results_score_GI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+
+#For significant ASVs the interaction should be kept! It is not neccesary for the other ASVs, and they should be refit and tested for association with disease score for supplementary.
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+#Colon
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f2_GI_c_count <- data.frame()
+f2_GI_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_count <- rbind(f2_GI_c_count, c1)
+   f2_GI_c_zero <- rbind(f2_GI_c_zero, z1)
+}
+ 
+f2_GI_c_count #ASV132, 215 and 751 has p-val<0.05
+f2_GI_c_zero
+
+f2_GI_c_count$location <- "c"
+f2_GI_c_count$part <- "NB"
+f2_GI_c_zero$location <- "c"
+f2_GI_c_zero$part <- "ZI"
+
+#Rectum
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_r)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f2_GI_r_count <- data.frame()
+f2_GI_r_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_count <- rbind(f2_GI_r_count, c1)
+   f2_GI_r_zero <- rbind(f2_GI_r_zero, z1)
+}
+ 
+f2_GI_r_count
+f2_GI_r_zero 
+
+f2_GI_r_count$location <- "r"
+f2_GI_r_count$part <- "NB"
+f2_GI_r_zero$location <- "r"
+f2_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_s)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f2_GI_s_count <- data.frame()
+f2_GI_s_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_count <- rbind(f2_GI_s_count, c1)
+   f2_GI_s_zero <- rbind(f2_GI_s_zero, z1)
+}
+ 
+f2_GI_s_count
+f2_GI_s_zero
+
+f2_GI_s_count$location <- "s"
+f2_GI_s_count$part <- "NB"
+f2_GI_s_zero$location <- "s"
+f2_GI_s_zero$part <- "ZI"
+
+#Transversum:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- as.integer( sample_data(ps_count_t)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f2_GI_t_count <- data.frame()
+f2_GI_t_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_count <- rbind(f2_GI_t_count, c1)
+   f2_GI_t_zero <- rbind(f2_GI_t_zero, z1)
+}
+ 
+f2_GI_t_count
+f2_GI_t_zero
+
+f2_GI_t_count$location <- "t"
+f2_GI_t_count$part <- "NB"
+f2_GI_t_zero$location <- "t"
+f2_GI_t_zero$part <- "ZI"
+
+#All these results should be summarised somehow
+res3 <- rbind(f2_GI_c_count, f2_GI_c_zero, f2_GI_r_count, f2_GI_r_zero, f2_GI_t_count, f2_GI_t_zero, f2_GI_s_count, f2_GI_s_zero)
+res3
+
+write.table(res3, file=paste0(main.dir, "results/Clinical_results_score_GI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+################
+#Now we come to those taxa, where the GI location was not important for disease score interaction. Here, I just fit the model again, but excluding interaction with GI. I now investigate the interaction between age and disease score 
+
+ N <- sample_data(ps_count_pucai_sccai)$N
+ person_ID <- as.factor(sample_data(ps_count_pucai_sccai)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_pucai_sccai)$sex)
+ asa <-  as.factor(sample_data(ps_count_pucai_sccai)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_pucai_sccai)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_pucai_sccai)$age_gr)
+ GI <-  sample_data(ps_count_pucai_sccai)$GI.location
+ 
+ score_num <- as.integer( sample_data(ps_count_pucai_sccai)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_pucai_sccai)))) #No transformation
+
+ test_noGI <- colnames(pheno)[!colnames(pheno) %in% unique(res1$bug)]
+
+f1_noGI <- mms(y=pheno[, test_noGI], fixed= ~bmi+sex+asa+age_gr*score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr*score_num + offset(log(N)))
+
+f1_noGI_failed <- c(1,2,6,10,12,15,24)
+
+res_inter_noGI <- as.data.frame(get.fixed(f1_noGI, part="dist", vr.name="age_grAdult:score_num"))
+res_inter_noGI$p_adj <- p.adjust(res_inter_noGI$pvalue, method="BH")
+res_inter_noGI$bug <- row.names(res_inter_noGI)
+res_inter_noGI$part <- "NB"
+res_inter_noGI_sig <- res_inter_noGI %>% filter(p_adj < 0.05)
+
+
+res_inter_noGI_zero <- as.data.frame(get.fixed(f1_noGI, part="zero", vr.name="age_grAdult:score_num"))
+res_inter_noGI_zero$p_adj <- p.adjust(res_inter_noGI_zero$pvalue, method="BH")
+res_inter_noGI_zero$bug <- row.names(res_inter_noGI_zero)
+res_inter_noGI_zero$part <- "ZI"
+res_inter_noGI_sig_zero <- res_inter_noGI_zero %>% filter(p_adj < 0.05)
+
+
+res4 <- rbind(res_inter_noGI_sig, res_inter_noGI_sig_zero)
+res4
+
+write.table(res4, file=paste0(main.dir, "results/Clinical_results_score_noGI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+res4_all <- rbind(res_inter_noGI, res_inter_noGI_zero)
+write.table(res4_all, file=paste0(main.dir, "results/Clinical_results_score_noGI_age_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#Split into age groups and test again
+#Children:
+ps_count_c <- subset_samples(ps_count_pucai_sccai, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ GI <-  sample_data(ps_count_c)$GI.location
+ 
+ score_num <- as.integer( sample_data(ps_count_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+ test_age <- colnames(pheno)[colnames(pheno) %in% unique(res4$bug)]
+
+f1_noGI_c <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_c <- as.data.frame(get.fixed(f1_noGI_c, part="dist", vr.name="score_num"))
+res_inter_noGI_c$p_adj <- p.adjust(res_inter_noGI_c$pvalue, method="BH")
+res_inter_noGI_c$bug <- row.names(res_inter_noGI_c)
+res_inter_noGI_c$part <- "NB"
+res_inter_noGI_c$age_gr <- "Children"
+
+res_inter_noGI_c_zero <- as.data.frame(get.fixed(f1_noGI_c, part="zero", vr.name="score_num"))
+res_inter_noGI_c_zero$p_adj <- p.adjust(res_inter_noGI_c_zero$pvalue, method="BH")
+res_inter_noGI_c_zero$bug <- row.names(res_inter_noGI_c_zero)
+res_inter_noGI_c_zero$part <- "ZI"
+res_inter_noGI_c_zero$age_gr <- "Children"
+
+#Adults:
+ps_count_a <- subset_samples(ps_count_pucai_sccai, age_gr=="Adult")
+ N <- sample_data(ps_count_a)$N
+ person_ID <- as.factor(sample_data(ps_count_a)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_a)$sex)
+ asa <-  as.factor(sample_data(ps_count_a)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_a)$bmi)
+ GI <-  sample_data(ps_count_a)$GI.location
+ 
+ score_num <- as.integer( sample_data(ps_count_a)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_a)))) #No transformation
+
+f1_noGI_a <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_a <- as.data.frame(get.fixed(f1_noGI_a, part="dist", vr.name="score_num"))
+res_inter_noGI_a$p_adj <- p.adjust(res_inter_noGI_a$pvalue, method="BH")
+res_inter_noGI_a$bug <- row.names(res_inter_noGI_a)
+res_inter_noGI_a$part <- "NB"
+res_inter_noGI_a$age_gr <- "Adults"
+
+res_inter_noGI_a_zero <- as.data.frame(get.fixed(f1_noGI_a, part="zero", vr.name="score_num"))
+res_inter_noGI_a_zero$p_adj <- p.adjust(res_inter_noGI_a_zero$pvalue, method="BH")
+res_inter_noGI_a_zero$bug <- row.names(res_inter_noGI_a_zero)
+res_inter_noGI_a_zero$part <- "ZI"
+res_inter_noGI_a_zero$age_gr <- "Adults"
+
+#Combine and save:
+res4_1 <- rbind(res_inter_noGI_c, res_inter_noGI_c_zero,res_inter_noGI_a, res_inter_noGI_a_zero)
+res4_1
+write.table(res4_1, file=paste0(main.dir, "results/Clinical_results_score_noGI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+#Those that were not significant: Refit without interaction term and test just disease score for the supplementary
+ N <- sample_data(ps_count_pucai_sccai)$N
+ person_ID <- as.factor(sample_data(ps_count_pucai_sccai)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_pucai_sccai)$sex)
+ asa <-  as.factor(sample_data(ps_count_pucai_sccai)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_pucai_sccai)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_pucai_sccai)$age_gr)
+ GI <-  sample_data(ps_count_pucai_sccai)$GI.location
+ 
+ score_num <- as.integer( sample_data(ps_count_pucai_sccai)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_pucai_sccai)))) #No transformation
+test_noGI_noage <- test_noGI[!test_noGI %in% res4$bug] 
+f2_noGI <- mms(y=pheno[, test_noGI_noage], fixed= ~bmi+sex+asa+age_gr+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num + offset(log(N)))
+
+f2_noGI_failed <- c(1,7,8,11)
+test_noGI_noage[f2_noGI_failed]
+
+res_disease_noGI <- as.data.frame(get.fixed(f2_noGI, part="dist", vr.name="score_num"))
+res_disease_noGI$p_adj <- p.adjust(res_disease_noGI$pvalue, method="BH")
+res_disease_noGI$bug <- row.names(res_disease_noGI)
+res_disease_noGI$part <- "NB"
+res_disease_noGI_sig <- res_disease_noGI %>% filter(p_adj < 0.05)
+
+res_disease_noGI_zero <- as.data.frame(get.fixed(f2_noGI, part="zero", vr.name="score_num"))
+res_disease_noGI_zero$p_adj <- p.adjust(res_disease_noGI_zero$pvalue, method="BH")
+res_disease_noGI_zero$bug <- row.names(res_disease_noGI_zero)
+res_disease_noGI_zero$part <- "ZI"
+res_disease_noGI_sig_zero <- res_disease_noGI_zero %>% filter(p_adj < 0.05)
+
+res5 <- rbind(res_disease_noGI_sig, res_disease_noGI_sig_zero)
+res5
+
+write.table(res5, file=paste0(main.dir, "results/Clinical_results_score_noGI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+res5_all <- rbind(res_disease_noGI, res_disease_noGI_zero)
+write.table(res5_all, file=paste0(main.dir, "results/Clinical_results_score_noGI_noAge_all.txt"), col.names=T, row.names=F, sep="\t")
+
+```
+
+# Analyses of faecal calprotectin
+
+Repeat all analyses with f_cal 
+
+```{r single species - fcal, echo=TRUE}
+
+# COUNT data prepare
+sample_data(ps_count_spe)$N <- rowSums(otu_table(ps_count_spe)) # read counts, important to do this BEFORE filtering taxa.
+
+##*****************
+## f_cal
+##*****************
+ps_count_fcal = subset_samples(ps_count_spe, is.na(bmi) != TRUE & is.na(f_cal_0) != TRUE )
+
+ps_count_fcal = filter_taxa(ps_count_fcal, function(x) sum(x > 3) > (0.3*length(x)), TRUE)
+# 68 taxa
+
+sample_data(ps_count_fcal)$GI.location <- ordered(sample_data(ps_count_fcal)$GI.location, levels = c('r','s',  't',     'c'),
+                              labels = c('r','s',  't',     'c')) # conversion
+
+ N <- sample_data(ps_count_fcal)$N
+ person_ID <- as.factor(sample_data(ps_count_fcal)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_fcal)$sex)
+ asa <-  as.factor(sample_data(ps_count_fcal)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_fcal)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_fcal)$age_gr)
+ GI <-  sample_data(ps_count_fcal)$GI.location
+ score_num <- log(as.integer(sample_data(ps_count_fcal)$f_cal_0)+1)
+ 
+ ggplot()+
+    geom_histogram(aes(x=exp(score_num)))
+ 
+clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+pheno <-  as.data.frame(as.matrix((otu_table(ps_count_fcal)))) #No transformation
+
+f1 <- mms(y=pheno, fixed= ~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)))
+
+f1_failed <- c(1,2,8,17,66)
+
+res_inter <- as.data.frame(get.fixed(f1, part="dist", vr.name="score_num:GI.L"))
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+res_inter$part <- "NB"
+res_inter$bug <- row.names(res_inter)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+
+res_inter_zero <- as.data.frame(get.fixed(f1, part="zero", vr.name="score_num:GI.L"))
+res_inter_zero$p_adj <- p.adjust(res_inter_zero$pvalue, method="BH")
+res_inter_zero$part <- "ZI"
+res_inter_zero$bug <- row.names(res_inter_zero)
+res_inter_sig_zero <- res_inter_zero %>% filter(p_adj < 0.05)
+
+res1 <- rbind(res_inter_sig, res_inter_sig_zero)
+res1
+
+write.table(res1, file=paste0(main.dir, "results/Fcal_results_score_GI.txt"), col.names=T, row.names=F, sep="\t")
+
+res1_all <- rbind(res_inter, res_inter_zero)
+write.table(res1_all, file=paste0(main.dir, "results/Fcal_results_score_GI_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#These are those where GI location really matter to the phenotype. 
+#Split up by GI and refit the model, testing also age*disease score
+#There is then only one data point pr. patient! No need to include random intercept and correlation structure
+
+#Colon
+ps_count_c <- subset_samples(ps_count_fcal, GI.location=="c")
+
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f1_GI_c_count <- data.frame()
+f1_GI_c_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_c_count <- rbind(f1_GI_c_count, c1)
+   f1_GI_c_zero <- rbind(f1_GI_c_zero, z1)
+}
+
+f1_GI_c_count
+f1_GI_c_zero
+
+f1_GI_c_count$location <- "c"
+f1_GI_c_count$part <- "NB"
+f1_GI_c_zero$location <- "c"
+f1_GI_c_zero$part <- "ZI"
+
+#Rectum
+ps_count_r <- subset_samples(ps_count_fcal, GI.location=="r")
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+pheno[, unique(res1$bug)]
+f1_GI_r_count <- data.frame()
+f1_GI_r_zero <- data.frame()
+for (i in unique(res1$bug)[2:10]){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_r_count <- rbind(f1_GI_r_count, c1)
+   f1_GI_r_zero <- rbind(f1_GI_r_zero, z1)
+}
+
+f1_GI_r_count
+f1_GI_r_zero
+
+f1_GI_r_count$location <- "r"
+f1_GI_r_count$part <- "NB"
+f1_GI_r_zero$location <- "r"
+f1_GI_r_zero$part <- "ZI"
+#OBS!!!!: ASV16 did not have zeros and thus failed!
+
+#Sigmoideum
+ps_count_s <- subset_samples(ps_count_fcal, GI.location=="s")
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f1_GI_s_count <- data.frame()
+f1_GI_s_zero <- data.frame()
+for (i in unique(res1$bug)[2:10]){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_s_count <- rbind(f1_GI_s_count, c1)
+   f1_GI_s_zero <- rbind(f1_GI_s_zero, z1)
+}
+ 
+f1_GI_s_count
+f1_GI_s_zero
+
+f1_GI_s_count$location <- "s"
+f1_GI_s_count$part <- "NB"
+f1_GI_s_zero$location <- "s"
+f1_GI_s_zero$part <- "ZI"
+#OBS!!!!: ASV16 did not have zeros and thus failed!
+
+#Transversum:
+ps_count_t <- subset_samples(ps_count_fcal, GI.location=="t")
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f1_GI_t_count <- data.frame()
+f1_GI_t_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_t_count <- rbind(f1_GI_t_count, c1)
+   f1_GI_t_zero <- rbind(f1_GI_t_zero, z1)
+}
+ 
+f1_GI_t_count
+f1_GI_t_zero
+
+f1_GI_t_count$location <- "t"
+f1_GI_t_count$part <- "NB"
+f1_GI_t_zero$location <- "t"
+f1_GI_t_zero$part <- "ZI"
+
+res2 <- rbind(f1_GI_c_count, f1_GI_c_zero, f1_GI_r_count, f1_GI_r_zero, f1_GI_t_count, f1_GI_t_zero, f1_GI_s_count, f1_GI_s_zero)
+res2
+
+write.table(res2, file=paste0(main.dir, "results/Fcal_results_score_GI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+#For significant ASV: Try to fit within age groups! This can only be done without covariates to have power enough to fit the models
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+
+#Colon - children
+ps_count_c_c <- subset_samples(ps_count_c, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_c)))) #No transformation
+
+f2_GI_c_c_count <- data.frame()
+f2_GI_c_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_c_count <- rbind(f2_GI_c_c_count, c1)
+   f2_GI_c_c_zero <- rbind(f2_GI_c_c_zero, z1)
+}
+ 
+f2_GI_c_c_count
+f2_GI_c_c_zero
+
+f2_GI_c_c_count$location <- "c"
+f2_GI_c_c_count$part <- "NB"
+f2_GI_c_c_zero$location <- "c"
+f2_GI_c_c_zero$part <- "ZI"
+f2_GI_c_c_count$age_gr <- "Children"
+f2_GI_c_c_zero$age_gr <- "Children"
+
+#Colon - adults:
+ps_count_c_a <- subset_samples(ps_count_c, age_gr=="Adult")
+ N <- sample_data(ps_count_c_a)$N
+ person_ID <- as.factor(sample_data(ps_count_c_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_a)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_a)))) #No transformation
+
+f2_GI_c_a_count <- data.frame()
+f2_GI_c_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_a_count <- rbind(f2_GI_c_a_count, c1)
+   f2_GI_c_a_zero <- rbind(f2_GI_c_a_zero, z1)
+}
+ 
+f2_GI_c_a_count
+f2_GI_c_a_zero
+
+f2_GI_c_a_count$location <- "c"
+f2_GI_c_a_count$part <- "NB"
+f2_GI_c_a_zero$location <- "c"
+f2_GI_c_a_zero$part <- "ZI"
+f2_GI_c_a_count$age_gr <- "Adults"
+f2_GI_c_a_zero$age_gr <- "Adults"
+
+#Rectum - children:
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_r_c <- subset_samples(ps_count_r, age_gr=="Paediatric")
+ N <- sample_data(ps_count_r_c)$N
+ person_ID <- as.factor(sample_data(ps_count_r_c)$study_id_new_meta)
+ score_num <- as.integer( sample_data(ps_count_r_c)$pucai_sccai)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r_c)))) #No transformation
+
+f2_GI_r_c_count <- data.frame()
+f2_GI_r_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_c_count <- rbind(f2_GI_r_c_count, c1)
+   f2_GI_r_c_zero <- rbind(f2_GI_r_c_zero, z1)
+}
+ 
+f2_GI_r_c_count
+f2_GI_r_c_zero
+
+f2_GI_r_c_count$location <- "r"
+f2_GI_r_c_count$part <- "NB"
+f2_GI_r_c_zero$location <- "r"
+f2_GI_r_c_zero$part <- "ZI"
+f2_GI_r_c_count$age_gr <- "Children"
+f2_GI_r_c_zero$age_gr <- "Children"
+
+#Rectum - adults:
+ps_count_r_a <- subset_samples(ps_count_r, age_gr=="Adult")
+ N <- sample_data(ps_count_r_a)$N
+ person_ID <- as.factor(sample_data(ps_count_r_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_r_a)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r_a)))) #No transformation
+
+f2_GI_r_a_count <- data.frame()
+f2_GI_r_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_a_count <- rbind(f2_GI_r_a_count, c1)
+   f2_GI_r_a_zero <- rbind(f2_GI_r_a_zero, z1)
+}
+ 
+f2_GI_r_a_count
+f2_GI_r_a_zero
+
+f2_GI_r_a_count$location <- "r"
+f2_GI_r_a_count$part <- "NB"
+f2_GI_r_a_zero$location <- "r"
+f2_GI_r_a_zero$part <- "ZI"
+f2_GI_r_a_count$age_gr <- "Adults"
+f2_GI_r_a_zero$age_gr <- "Adults"
+
+#Sigmoideum - children
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_s_c <- subset_samples(ps_count_s, age_gr=="Paediatric")
+ N <- sample_data(ps_count_s_c)$N
+ person_ID <- as.factor(sample_data(ps_count_s_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_s_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_c)))) #No transformation
+
+f2_GI_s_c_count <- data.frame()
+f2_GI_s_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_c_count <- rbind(f2_GI_s_c_count, c1)
+   f2_GI_s_c_zero <- rbind(f2_GI_s_c_zero, z1)
+}
+ 
+f2_GI_s_c_count
+f2_GI_s_c_zero
+
+f2_GI_s_c_count$location <- "s"
+f2_GI_s_c_count$part <- "NB"
+f2_GI_s_c_zero$location <- "s"
+f2_GI_s_c_zero$part <- "ZI"
+f2_GI_s_c_count$age_gr <- "Children"
+f2_GI_s_c_zero$age_gr <- "Children"
+
+#Sigmoideum - adults:
+ps_count_s_a <- subset_samples(ps_count_s, age_gr=="Adult")
+ N <- sample_data(ps_count_s_a)$N
+ person_ID <- as.factor(sample_data(ps_count_s_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_s_a)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_a)))) #No transformation
+
+f2_GI_s_a_count <- data.frame()
+f2_GI_s_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_a_count <- rbind(f2_GI_s_a_count, c1)
+   f2_GI_s_a_zero <- rbind(f2_GI_s_a_zero, z1)
+}
+ 
+f2_GI_s_a_count
+f2_GI_s_a_zero
+
+f2_GI_s_a_count$location <- "s"
+f2_GI_s_a_count$part <- "NB"
+f2_GI_s_a_zero$location <- "s"
+f2_GI_s_a_zero$part <- "ZI"
+f2_GI_s_a_count$age_gr <- "Adults"
+f2_GI_s_a_zero$age_gr <- "Adults"
+
+#Transversum - children:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_t_c <- subset_samples(ps_count_t, age_gr=="Paediatric")
+ N <- sample_data(ps_count_t_c)$N
+ person_ID <- as.factor(sample_data(ps_count_t_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_c)))) #No transformation
+
+f2_GI_t_c_count <- data.frame()
+f2_GI_t_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_c_count <- rbind(f2_GI_t_c_count, c1)
+   f2_GI_t_c_zero <- rbind(f2_GI_t_c_zero, z1)
+}
+ 
+f2_GI_t_c_count
+f2_GI_t_c_zero
+
+f2_GI_t_c_count$location <- "t"
+f2_GI_t_c_count$part <- "NB"
+f2_GI_t_c_zero$location <- "t"
+f2_GI_t_c_zero$part <- "ZI"
+f2_GI_t_c_count$age_gr <- "Children"
+f2_GI_t_c_zero$age_gr <- "Children"
+
+#Transversum - adults:
+ps_count_t_a <- subset_samples(ps_count_t, age_gr=="Adult")
+ N <- sample_data(ps_count_t_a)$N
+ person_ID <- as.factor(sample_data(ps_count_t_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_a)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_a)))) #No transformation
+
+f2_GI_t_a_count <- data.frame()
+f2_GI_t_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_a_count <- rbind(f2_GI_t_a_count, c1)
+   f2_GI_t_a_zero <- rbind(f2_GI_t_a_zero, z1)
+}
+ 
+f2_GI_t_a_count
+f2_GI_t_a_zero
+
+f2_GI_t_a_count$location <- "t"
+f2_GI_t_a_count$part <- "NB"
+f2_GI_t_a_zero$location <- "t"
+f2_GI_t_a_zero$part <- "ZI"
+f2_GI_t_a_count$age_gr <- "Adults"
+f2_GI_t_a_zero$age_gr <- "Adults"
+
+#Combine all results and save them!
+res2_1 <- rbind(f2_GI_c_c_count, f2_GI_c_c_zero,f2_GI_c_a_count, f2_GI_c_a_zero, f2_GI_r_c_count, f2_GI_r_c_zero,f2_GI_r_a_count, f2_GI_r_a_zero,f2_GI_s_c_count, f2_GI_s_c_zero,f2_GI_s_a_count, f2_GI_s_a_zero,f2_GI_t_c_count, f2_GI_t_c_zero,f2_GI_t_a_count, f2_GI_t_a_zero)
+res2_1
+
+write.table(res2_1, file=paste0(main.dir, "results/Fcal_results_score_GI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+###
+#For significant ASVs the interaction should be kept! It is not neccesary for the other ASVs, and they should be refit and tested for association with disease score for supplementary.
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+#Colon
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f2_GI_c_count <- data.frame()
+f2_GI_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_count <- rbind(f2_GI_c_count, c1)
+   f2_GI_c_zero <- rbind(f2_GI_c_zero, z1)
+}
+ 
+f2_GI_c_count
+f2_GI_c_zero
+
+f2_GI_c_count$location <- "c"
+f2_GI_c_count$part <- "NB"
+f2_GI_c_zero$location <- "c"
+f2_GI_c_zero$part <- "ZI"
+
+#Rectum
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f2_GI_r_count <- data.frame()
+f2_GI_r_zero <- data.frame()
+for (i in test_GI[2:7]){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_count <- rbind(f2_GI_r_count, c1)
+   f2_GI_r_zero <- rbind(f2_GI_r_zero, z1)
+}
+ 
+f2_GI_r_count
+f2_GI_r_zero 
+
+f2_GI_r_count$location <- "r"
+f2_GI_r_count$part <- "NB"
+f2_GI_r_zero$location <- "r"
+f2_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f2_GI_s_count <- data.frame()
+f2_GI_s_zero <- data.frame()
+for (i in test_GI[2:8]){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_count <- rbind(f2_GI_s_count, c1)
+   f2_GI_s_zero <- rbind(f2_GI_s_zero, z1)
+}
+ 
+f2_GI_s_count
+f2_GI_s_zero
+
+f2_GI_s_count$location <- "s"
+f2_GI_s_count$part <- "NB"
+f2_GI_s_zero$location <- "s"
+f2_GI_s_zero$part <- "ZI"
+
+#Transversum:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f2_GI_t_count <- data.frame()
+f2_GI_t_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_count <- rbind(f2_GI_t_count, c1)
+   f2_GI_t_zero <- rbind(f2_GI_t_zero, z1)
+}
+ 
+f2_GI_t_count
+f2_GI_t_zero
+
+f2_GI_t_count$location <- "t"
+f2_GI_t_count$part <- "NB"
+f2_GI_t_zero$location <- "t"
+f2_GI_t_zero$part <- "ZI"
+
+#All these results should be summarised somehow
+res3 <- rbind(f2_GI_c_count, f2_GI_c_zero, f2_GI_r_count, f2_GI_r_zero, f2_GI_t_count, f2_GI_t_zero, f2_GI_s_count, f2_GI_s_zero)
+res3
+
+write.table(res3, file=paste0(main.dir, "results/Fcal_results_score_GI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+
+################
+#Now we come to those taxa, where the GI location was not important for disease score interaction. Here, I just fit the model again, but excluding interaction with GI. I now investigate the interaction between age and disease score 
+
+ N <- sample_data(ps_count_fcal)$N
+ person_ID <- as.factor(sample_data(ps_count_fcal)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_fcal)$sex)
+ asa <-  as.factor(sample_data(ps_count_fcal)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_fcal)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_fcal)$age_gr)
+ GI <-  sample_data(ps_count_fcal)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_fcal)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_fcal)))) #No transformation
+
+ test_noGI <- colnames(pheno)[!colnames(pheno) %in% unique(res1$bug)]
+
+f1_noGI <- mms(y=pheno[, test_noGI], fixed= ~bmi+sex+asa+age_gr*score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr*score_num + offset(log(N)))
+
+f1_noGI_failed <- c(1,2,15,24,26,56)
+
+res_inter_noGI <- as.data.frame(get.fixed(f1_noGI, part="dist", vr.name="age_grAdult:score_num"))
+res_inter_noGI$p_adj <- p.adjust(res_inter_noGI$pvalue, method="BH")
+res_inter_noGI$bug <- row.names(res_inter_noGI)
+res_inter_noGI$part <- "NB"
+res_inter_noGI_sig <- res_inter_noGI %>% filter(p_adj < 0.05)
+
+res_inter_noGI_zero <- as.data.frame(get.fixed(f1_noGI, part="zero", vr.name="age_grAdult:score_num"))
+res_inter_noGI_zero$p_adj <- p.adjust(res_inter_noGI_zero$pvalue, method="BH")
+res_inter_noGI_zero$bug <- row.names(res_inter_noGI_zero)
+res_inter_noGI_zero$part <- "ZI"
+res_inter_noGI_sig_zero <- res_inter_noGI_zero %>% filter(p_adj < 0.05)
+
+res4 <- rbind(res_inter_noGI_sig, res_inter_noGI_sig_zero)
+res4
+
+write.table(res4, file=paste0(main.dir, "results/Fcal_results_score_noGI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+res4_all <- rbind(res_inter_noGI, res_inter_noGI_zero)
+write.table(res4_all, file=paste0(main.dir, "results/Fcal_results_score_noGI_age_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#Split into age groups and test again
+#Children:
+ps_count_c <- subset_samples(ps_count_fcal, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ GI <-  sample_data(ps_count_c)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_c)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+ test_age <- colnames(pheno)[colnames(pheno) %in% unique(res4$bug)]
+
+f1_noGI_c <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_c <- as.data.frame(get.fixed(f1_noGI_c, part="dist", vr.name="score_num"))
+res_inter_noGI_c$p_adj <- p.adjust(res_inter_noGI_c$pvalue, method="BH")
+res_inter_noGI_c$bug <- row.names(res_inter_noGI_c)
+res_inter_noGI_c$part <- "NB"
+res_inter_noGI_c$age_gr <- "Children"
+
+res_inter_noGI_c_zero <- as.data.frame(get.fixed(f1_noGI_c, part="zero", vr.name="score_num"))
+res_inter_noGI_c_zero$p_adj <- p.adjust(res_inter_noGI_c_zero$pvalue, method="BH")
+res_inter_noGI_c_zero$bug <- row.names(res_inter_noGI_c_zero)
+res_inter_noGI_c_zero$part <- "ZI"
+res_inter_noGI_c_zero$age_gr <- "Children"
+
+#Adults:
+ps_count_a <- subset_samples(ps_count_fcal, age_gr=="Adult")
+ N <- sample_data(ps_count_a)$N
+ person_ID <- as.factor(sample_data(ps_count_a)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_a)$sex)
+ asa <-  as.factor(sample_data(ps_count_a)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_a)$bmi)
+ GI <-  sample_data(ps_count_a)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_a)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_a)))) #No transformation
+
+f1_noGI_a <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_a <- as.data.frame(get.fixed(f1_noGI_a, part="dist", vr.name="score_num"))
+res_inter_noGI_a$p_adj <- p.adjust(res_inter_noGI_a$pvalue, method="BH")
+res_inter_noGI_a$bug <- row.names(res_inter_noGI_a)
+res_inter_noGI_a$part <- "NB"
+res_inter_noGI_a$age_gr <- "Adults"
+
+res_inter_noGI_a_zero <- as.data.frame(get.fixed(f1_noGI_a, part="zero", vr.name="score_num"))
+res_inter_noGI_a_zero$p_adj <- p.adjust(res_inter_noGI_a_zero$pvalue, method="BH")
+res_inter_noGI_a_zero$bug <- row.names(res_inter_noGI_a_zero)
+res_inter_noGI_a_zero$part <- "ZI"
+res_inter_noGI_a_zero$age_gr <- "Adults"
+
+#Combine and save:
+res4_1 <- rbind(res_inter_noGI_c, res_inter_noGI_c_zero,res_inter_noGI_a, res_inter_noGI_a_zero)
+res4_1
+write.table(res4_1, file=paste0(main.dir, "results/Fcal_results_score_noGI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+#Those that were not significant: Refit without interaction term and test just disease score for the supplementary
+ N <- sample_data(ps_count_fcal)$N
+ person_ID <- as.factor(sample_data(ps_count_fcal)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_fcal)$sex)
+ asa <-  as.factor(sample_data(ps_count_fcal)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_fcal)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_fcal)$age_gr)
+ GI <-  sample_data(ps_count_fcal)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_fcal)$f_cal_0)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_fcal)))) #No transformation
+test_noGI_noage <- test_noGI[!test_noGI %in% res4$bug] 
+f2_noGI <- mms(y=pheno[, test_noGI_noage], fixed= ~bmi+sex+asa+age_gr+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num + offset(log(N)))
+
+f2_noGI_failed <- c(1,5,13)
+test_noGI_noage[f2_noGI_failed]
+
+res_disease_noGI <- as.data.frame(get.fixed(f2_noGI, part="dist", vr.name="score_num"))
+res_disease_noGI$p_adj <- p.adjust(res_disease_noGI$pvalue, method="BH")
+res_disease_noGI$bug <- row.names(res_disease_noGI)
+res_disease_noGI$part <- "NB"
+res_disease_noGI_sig <- res_disease_noGI %>% filter(p_adj < 0.05)
+
+res_disease_noGI_zero <- as.data.frame(get.fixed(f2_noGI, part="zero", vr.name="score_num"))
+res_disease_noGI_zero$p_adj <- p.adjust(res_disease_noGI_zero$pvalue, method="BH")
+res_disease_noGI_zero$bug <- row.names(res_disease_noGI_zero)
+res_disease_noGI_zero$part <- "ZI"
+res_disease_noGI_sig_zero <- res_disease_noGI_zero %>% filter(p_adj < 0.05)
+
+res5 <- rbind(res_disease_noGI_sig, res_disease_noGI_sig_zero)
+res5
+
+write.table(res5, file=paste0(main.dir, "results/Fcal_results_score_noGI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+res5_all <- rbind(res_disease_noGI, res_disease_noGI_zero)
+write.table(res5_all, file=paste0(main.dir, "results/Fcal_results_score_noGI_noAge_all.txt"), col.names=T, row.names=F, sep="\t")
+
+```
+
+# Analyses of geboes score
+
+Try with geboes:
+```{r echo=TRUE}
+
+##*****************
+## Geboes
+##*****************
+ps_count_geb = subset_samples(ps_count_spe, is.na(bmi) != TRUE & is.na(geb) != TRUE )
+
+ps_count_geb = filter_taxa(ps_count_geb, function(x) sum(x > 3) > (0.3*length(x)), TRUE)
+# 66 taxa
+
+sample_data(ps_count_geb)$GI.location <- ordered(sample_data(ps_count_geb)$GI.location, levels = c('r','s',  't',     'c'),
+                              labels = c('r','s',  't',     'c')) # conversion
+
+ N <- sample_data(ps_count_geb)$N
+ person_ID <- as.factor(sample_data(ps_count_geb)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_geb)$sex)
+ asa <-  as.factor(sample_data(ps_count_geb)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_geb)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_geb)$age_gr)
+ GI <-  sample_data(ps_count_geb)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_geb)$geb)+1)
+ 
+ ggplot()+
+    geom_histogram(aes(x=exp(score_num)))
+ 
+clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+pheno <-  as.data.frame(as.matrix((otu_table(ps_count_geb)))) #No transformation
+
+f1 <- mms(y=pheno, fixed= ~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)))
+
+f1_failed <- c(1,11,17,18,26,30,36)
+
+res_inter <- as.data.frame(get.fixed(f1, part="dist", vr.name="score_num:GI.L"))
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+res_inter$part <- "NB"
+res_inter$bug <- row.names(res_inter)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+
+res_inter_zero <- as.data.frame(get.fixed(f1, part="zero", vr.name="score_num:GI.L"))
+res_inter_zero$p_adj <- p.adjust(res_inter_zero$pvalue, method="BH")
+res_inter_zero$part <- "ZI"
+res_inter_zero$bug <- row.names(res_inter_zero)
+res_inter_sig_zero <- res_inter_zero %>% filter(p_adj < 0.05)
+
+res1 <- rbind(res_inter_sig, res_inter_sig_zero)
+res1
+
+write.table(res1, file=paste0(main.dir, "results/Geboes_results_score_GI.txt"), col.names=T, row.names=F, sep="\t")
+
+res1_all <- rbind(res_inter, res_inter_zero)
+write.table(res1_all, file=paste0(main.dir, "results/Geboes_results_score_GI_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#These are those where GI location really matter to the phenotype. 
+#Split up by GI and refit the model, testing also age*disease score
+#There is then only one data point pr. patient! No need to include random intercept and correlation structure
+
+#Colon
+ps_count_c <- subset_samples(ps_count_geb, GI.location=="c")
+
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f1_GI_c_count <- data.frame()
+f1_GI_c_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_c_count <- rbind(f1_GI_c_count, c1)
+   f1_GI_c_zero <- rbind(f1_GI_c_zero, z1)
+}
+
+f1_GI_c_count
+f1_GI_c_zero
+
+f1_GI_c_count$location <- "c"
+f1_GI_c_count$part <- "NB"
+f1_GI_c_zero$location <- "c"
+f1_GI_c_zero$part <- "ZI"
+
+#Rectum
+ps_count_r <- subset_samples(ps_count_geb, GI.location=="r")
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f1_GI_r_count <- data.frame()
+f1_GI_r_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_r_count <- rbind(f1_GI_r_count, c1)
+   f1_GI_r_zero <- rbind(f1_GI_r_zero, z1)
+}
+
+f1_GI_r_count
+f1_GI_r_zero
+
+f1_GI_r_count$location <- "r"
+f1_GI_r_count$part <- "NB"
+f1_GI_r_zero$location <- "r"
+f1_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+ps_count_s <- subset_samples(ps_count_geb, GI.location=="s")
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f1_GI_s_count <- data.frame()
+f1_GI_s_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_s_count <- rbind(f1_GI_s_count, c1)
+   f1_GI_s_zero <- rbind(f1_GI_s_zero, z1)
+}
+ 
+f1_GI_s_count
+f1_GI_s_zero
+
+f1_GI_s_count$location <- "s"
+f1_GI_s_count$part <- "NB"
+f1_GI_s_zero$location <- "s"
+f1_GI_s_zero$part <- "ZI"
+
+#Transversum:
+ps_count_t <- subset_samples(ps_count_geb, GI.location=="t")
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f1_GI_t_count <- data.frame()
+f1_GI_t_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_t_count <- rbind(f1_GI_t_count, c1)
+   f1_GI_t_zero <- rbind(f1_GI_t_zero, z1)
+}
+ 
+f1_GI_t_count
+f1_GI_t_zero
+
+f1_GI_t_count$location <- "t"
+f1_GI_t_count$part <- "NB"
+f1_GI_t_zero$location <- "t"
+f1_GI_t_zero$part <- "ZI"
+
+res2 <- rbind(f1_GI_c_count, f1_GI_c_zero, f1_GI_r_count, f1_GI_r_zero, f1_GI_t_count, f1_GI_t_zero, f1_GI_s_count, f1_GI_s_zero)
+res2
+
+write.table(res2, file=paste0(main.dir, "results/Geboes_results_score_GI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+#For significant ASV: Try to fit within age groups! This can only be done without covariates to have power enough to fit the models
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+
+#Colon - children
+ps_count_c_c <- subset_samples(ps_count_c, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_c)))) #No transformation
+
+f2_GI_c_c_count <- data.frame()
+f2_GI_c_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_c_count <- rbind(f2_GI_c_c_count, c1)
+   f2_GI_c_c_zero <- rbind(f2_GI_c_c_zero, z1)
+}
+ 
+f2_GI_c_c_count
+f2_GI_c_c_zero
+
+f2_GI_c_c_count$location <- "c"
+f2_GI_c_c_count$part <- "NB"
+f2_GI_c_c_zero$location <- "c"
+f2_GI_c_c_zero$part <- "ZI"
+f2_GI_c_c_count$age_gr <- "Children"
+f2_GI_c_c_zero$age_gr <- "Children"
+
+#Colon - adults:
+ps_count_c_a <- subset_samples(ps_count_c, age_gr=="Adult")
+ N <- sample_data(ps_count_c_a)$N
+ person_ID <- as.factor(sample_data(ps_count_c_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_a)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_a)))) #No transformation
+
+f2_GI_c_a_count <- data.frame()
+f2_GI_c_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_a_count <- rbind(f2_GI_c_a_count, c1)
+   f2_GI_c_a_zero <- rbind(f2_GI_c_a_zero, z1)
+}
+ 
+f2_GI_c_a_count
+f2_GI_c_a_zero
+
+f2_GI_c_a_count$location <- "c"
+f2_GI_c_a_count$part <- "NB"
+f2_GI_c_a_zero$location <- "c"
+f2_GI_c_a_zero$part <- "ZI"
+f2_GI_c_a_count$age_gr <- "Adults"
+f2_GI_c_a_zero$age_gr <- "Adults"
+
+#Rectum - children:
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+#None to be tested!
+
+
+#Sigmoideum - children
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_s_c <- subset_samples(ps_count_s, age_gr=="Paediatric")
+ N <- sample_data(ps_count_s_c)$N
+ person_ID <- as.factor(sample_data(ps_count_s_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_s_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_c)))) #No transformation
+
+f2_GI_s_c_count <- data.frame()
+f2_GI_s_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_c_count <- rbind(f2_GI_s_c_count, c1)
+   f2_GI_s_c_zero <- rbind(f2_GI_s_c_zero, z1)
+}
+ 
+f2_GI_s_c_count
+f2_GI_s_c_zero
+
+f2_GI_s_c_count$location <- "s"
+f2_GI_s_c_count$part <- "NB"
+f2_GI_s_c_zero$location <- "s"
+f2_GI_s_c_zero$part <- "ZI"
+f2_GI_s_c_count$age_gr <- "Children"
+f2_GI_s_c_zero$age_gr <- "Children"
+
+#Sigmoideum - adults:
+ps_count_s_a <- subset_samples(ps_count_s, age_gr=="Adult")
+ N <- sample_data(ps_count_s_a)$N
+ person_ID <- as.factor(sample_data(ps_count_s_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_s_a)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s_a)))) #No transformation
+
+f2_GI_s_a_count <- data.frame()
+f2_GI_s_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_a_count <- rbind(f2_GI_s_a_count, c1)
+   f2_GI_s_a_zero <- rbind(f2_GI_s_a_zero, z1)
+}
+ 
+f2_GI_s_a_count
+f2_GI_s_a_zero
+
+f2_GI_s_a_count$location <- "s"
+f2_GI_s_a_count$part <- "NB"
+f2_GI_s_a_zero$location <- "s"
+f2_GI_s_a_zero$part <- "ZI"
+f2_GI_s_a_count$age_gr <- "Adults"
+f2_GI_s_a_zero$age_gr <- "Adults"
+
+#Transversum - children:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_t_c <- subset_samples(ps_count_t, age_gr=="Paediatric")
+ N <- sample_data(ps_count_t_c)$N
+ person_ID <- as.factor(sample_data(ps_count_t_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_c)))) #No transformation
+
+f2_GI_t_c_count <- data.frame()
+f2_GI_t_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_c_count <- rbind(f2_GI_t_c_count, c1)
+   f2_GI_t_c_zero <- rbind(f2_GI_t_c_zero, z1)
+}
+ 
+f2_GI_t_c_count
+f2_GI_t_c_zero
+
+f2_GI_t_c_count$location <- "t"
+f2_GI_t_c_count$part <- "NB"
+f2_GI_t_c_zero$location <- "t"
+f2_GI_t_c_zero$part <- "ZI"
+f2_GI_t_c_count$age_gr <- "Children"
+f2_GI_t_c_zero$age_gr <- "Children"
+
+#Transversum - adults:
+ps_count_t_a <- subset_samples(ps_count_t, age_gr=="Adult")
+ N <- sample_data(ps_count_t_a)$N
+ person_ID <- as.factor(sample_data(ps_count_t_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_a)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_a)))) #No transformation
+
+f2_GI_t_a_count <- data.frame()
+f2_GI_t_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_a_count <- rbind(f2_GI_t_a_count, c1)
+   f2_GI_t_a_zero <- rbind(f2_GI_t_a_zero, z1)
+}
+ 
+f2_GI_t_a_count
+f2_GI_t_a_zero
+
+f2_GI_t_a_count$location <- "t"
+f2_GI_t_a_count$part <- "NB"
+f2_GI_t_a_zero$location <- "t"
+f2_GI_t_a_zero$part <- "ZI"
+f2_GI_t_a_count$age_gr <- "Adults"
+f2_GI_t_a_zero$age_gr <- "Adults"
+
+#Combine all results and save them!
+res2_1 <- rbind(f2_GI_c_c_count, f2_GI_c_c_zero,f2_GI_c_a_count, f2_GI_c_a_zero,f2_GI_s_c_count, f2_GI_s_c_zero,f2_GI_s_a_count, f2_GI_s_a_zero,f2_GI_t_c_count, f2_GI_t_c_zero,f2_GI_t_a_count, f2_GI_t_a_zero)
+res2_1
+
+write.table(res2_1, file=paste0(main.dir, "results/Geboes_results_score_GI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+
+#For significant ASVs the interaction should be kept! It is not neccesary for the other ASVs, and they should be refit and tested for association with disease score for supplementary.
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+#Colon
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f2_GI_c_count <- data.frame()
+f2_GI_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_count <- rbind(f2_GI_c_count, c1)
+   f2_GI_c_zero <- rbind(f2_GI_c_zero, z1)
+}
+ 
+f2_GI_c_count #ASV132, 215 and 751 has p-val<0.05
+f2_GI_c_zero
+
+f2_GI_c_count$location <- "c"
+f2_GI_c_count$part <- "NB"
+f2_GI_c_zero$location <- "c"
+f2_GI_c_zero$part <- "ZI"
+
+#Rectum
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f2_GI_r_count <- data.frame()
+f2_GI_r_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_count <- rbind(f2_GI_r_count, c1)
+   f2_GI_r_zero <- rbind(f2_GI_r_zero, z1)
+}
+ 
+f2_GI_r_count
+f2_GI_r_zero 
+
+f2_GI_r_count$location <- "r"
+f2_GI_r_count$part <- "NB"
+f2_GI_r_zero$location <- "r"
+f2_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f2_GI_s_count <- data.frame()
+f2_GI_s_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_count <- rbind(f2_GI_s_count, c1)
+   f2_GI_s_zero <- rbind(f2_GI_s_zero, z1)
+}
+ 
+f2_GI_s_count
+f2_GI_s_zero
+
+f2_GI_s_count$location <- "s"
+f2_GI_s_count$part <- "NB"
+f2_GI_s_zero$location <- "s"
+f2_GI_s_zero$part <- "ZI"
+
+#Transversum:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f2_GI_t_count <- data.frame()
+f2_GI_t_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_count <- rbind(f2_GI_t_count, c1)
+   f2_GI_t_zero <- rbind(f2_GI_t_zero, z1)
+}
+ 
+f2_GI_t_count
+f2_GI_t_zero
+
+f2_GI_t_count$location <- "t"
+f2_GI_t_count$part <- "NB"
+f2_GI_t_zero$location <- "t"
+f2_GI_t_zero$part <- "ZI"
+
+#All these results should be summarised somehow
+res3 <- rbind(f2_GI_c_count, f2_GI_c_zero, f2_GI_r_count, f2_GI_r_zero, f2_GI_t_count, f2_GI_t_zero, f2_GI_s_count, f2_GI_s_zero)
+res3
+
+write.table(res3, file=paste0(main.dir, "results/Geboes_results_score_GI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+################
+#Now we come to those taxa, where the GI location was not important for disease score interaction. Here, I just fit the model again, but excluding interaction with GI. I now investigate the interaction between age and disease score 
+
+ N <- sample_data(ps_count_geb)$N
+ person_ID <- as.factor(sample_data(ps_count_geb)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_geb)$sex)
+ asa <-  as.factor(sample_data(ps_count_geb)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_geb)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_geb)$age_gr)
+ GI <-  sample_data(ps_count_geb)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_geb)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_geb)))) #No transformation
+
+ test_noGI <- colnames(pheno)[!colnames(pheno) %in% unique(res1$bug)]
+
+f1_noGI <- mms(y=pheno[, test_noGI], fixed= ~bmi+sex+asa+age_gr*score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr*score_num + offset(log(N)))
+
+f1_noGI_failed <- c(1,9,11,14)
+
+res_inter_noGI <- as.data.frame(get.fixed(f1_noGI, part="dist", vr.name="age_grAdult:score_num"))
+res_inter_noGI$p_adj <- p.adjust(res_inter_noGI$pvalue, method="BH")
+res_inter_noGI$bug <- row.names(res_inter_noGI)
+res_inter_noGI$part <- "NB"
+res_inter_noGI_sig <- res_inter_noGI %>% filter(p_adj < 0.05)
+
+res_inter_noGI_zero <- as.data.frame(get.fixed(f1_noGI, part="zero", vr.name="age_grAdult:score_num"))
+res_inter_noGI_zero$p_adj <- p.adjust(res_inter_noGI_zero$pvalue, method="BH")
+res_inter_noGI_zero$bug <- row.names(res_inter_noGI_zero)
+res_inter_noGI_zero$part <- "ZI"
+res_inter_noGI_sig_zero <- res_inter_noGI_zero %>% filter(p_adj < 0.05)
+
+
+res4 <- rbind(res_inter_noGI_sig, res_inter_noGI_sig_zero)
+res4
+
+write.table(res4, file=paste0(main.dir, "results/Geboes_results_score_noGI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+res4_all <- rbind(res_inter_noGI, res_inter_noGI_zero)
+write.table(res4_all, file=paste0(main.dir, "results/Geboes_results_score_noGI_age_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#Split into age groups and test again
+#Children:
+ps_count_c <- subset_samples(ps_count_geb, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ GI <-  sample_data(ps_count_c)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_c)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+ test_age <- colnames(pheno)[colnames(pheno) %in% unique(res4$bug)]
+
+f1_noGI_c <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_c <- as.data.frame(get.fixed(f1_noGI_c, part="dist", vr.name="score_num"))
+res_inter_noGI_c$p_adj <- p.adjust(res_inter_noGI_c$pvalue, method="BH")
+res_inter_noGI_c$bug <- row.names(res_inter_noGI_c)
+res_inter_noGI_c$part <- "NB"
+res_inter_noGI_c$age_gr <- "Children"
+
+res_inter_noGI_c_zero <- as.data.frame(get.fixed(f1_noGI_c, part="zero", vr.name="score_num"))
+res_inter_noGI_c_zero$p_adj <- p.adjust(res_inter_noGI_c_zero$pvalue, method="BH")
+res_inter_noGI_c_zero$bug <- row.names(res_inter_noGI_c_zero)
+res_inter_noGI_c_zero$part <- "ZI"
+res_inter_noGI_c_zero$age_gr <- "Children"
+
+#Adults:
+ps_count_a <- subset_samples(ps_count_geb, age_gr=="Adult")
+ N <- sample_data(ps_count_a)$N
+ person_ID <- as.factor(sample_data(ps_count_a)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_a)$sex)
+ asa <-  as.factor(sample_data(ps_count_a)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_a)$bmi)
+ GI <-  sample_data(ps_count_a)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_a)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_a)))) #No transformation
+
+f1_noGI_a <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_a <- as.data.frame(get.fixed(f1_noGI_a, part="dist", vr.name="score_num"))
+res_inter_noGI_a$p_adj <- p.adjust(res_inter_noGI_a$pvalue, method="BH")
+res_inter_noGI_a$bug <- row.names(res_inter_noGI_a)
+res_inter_noGI_a$part <- "NB"
+res_inter_noGI_a$age_gr <- "Adults"
+
+res_inter_noGI_a_zero <- as.data.frame(get.fixed(f1_noGI_a, part="zero", vr.name="score_num"))
+res_inter_noGI_a_zero$p_adj <- p.adjust(res_inter_noGI_a_zero$pvalue, method="BH")
+res_inter_noGI_a_zero$bug <- row.names(res_inter_noGI_a_zero)
+res_inter_noGI_a_zero$part <- "ZI"
+res_inter_noGI_a_zero$age_gr <- "Adults"
+
+#Combine and save:
+res4_1 <- rbind(res_inter_noGI_c, res_inter_noGI_c_zero,res_inter_noGI_a, res_inter_noGI_a_zero)
+res4_1
+write.table(res4_1, file=paste0(main.dir, "results/Geboes_results_score_noGI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+#Those that were not significant: Refit without interaction term and test just disease score for the supplementary
+ N <- sample_data(ps_count_geb)$N
+ person_ID <- as.factor(sample_data(ps_count_geb)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_geb)$sex)
+ asa <-  as.factor(sample_data(ps_count_geb)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_geb)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_geb)$age_gr)
+ GI <-  sample_data(ps_count_geb)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_geb)$geb)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_geb)))) #No transformation
+test_noGI_noage <- test_noGI[!test_noGI %in% res4$bug] 
+f2_noGI <- mms(y=pheno[, test_noGI_noage], fixed= ~bmi+sex+asa+age_gr+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num + offset(log(N)))
+
+f2_noGI_failed <- c(1,6,10,15,20)
+test_noGI_noage[f2_noGI_failed]
+
+res_disease_noGI <- as.data.frame(get.fixed(f2_noGI, part="dist", vr.name="score_num"))
+res_disease_noGI$p_adj <- p.adjust(res_disease_noGI$pvalue, method="BH")
+res_disease_noGI$bug <- row.names(res_disease_noGI)
+res_disease_noGI$part <- "NB"
+res_disease_noGI_sig <- res_disease_noGI %>% filter(p_adj < 0.05)
+
+res_disease_noGI_zero <- as.data.frame(get.fixed(f2_noGI, part="zero", vr.name="score_num"))
+res_disease_noGI_zero$p_adj <- p.adjust(res_disease_noGI_zero$pvalue, method="BH")
+res_disease_noGI_zero$bug <- row.names(res_disease_noGI_zero)
+res_disease_noGI_zero$part <- "ZI"
+res_disease_noGI_sig_zero <- res_disease_noGI_zero %>% filter(p_adj < 0.05)
+
+
+res5 <- rbind(res_disease_noGI_sig, res_disease_noGI_sig_zero)
+res5
+
+write.table(res5, file=paste0(main.dir, "results/Geboes_results_score_noGI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+res5_all <- rbind(res_disease_noGI, res_disease_noGI_zero)
+write.table(res5_all, file=paste0(main.dir, "results/Geboes_results_score_noGI_noAge_all.txt"), col.names=T, row.names=F, sep="\t")
+ps_count_uceis = subset_samples(ps_count_spe, is.na(bmi) != TRUE & is.na(uceis) != TRUE )
+```
+
+# Analyses of uceis score
+Last one: uceis
+
+```{r echo=TRUE}
+
+
+##*****************
+## Uceis
+##*****************
+
+ps_count_uceis = filter_taxa(ps_count_uceis, function(x) sum(x > 3) > (0.3*length(x)), TRUE)
+# 66 taxa
+
+sample_data(ps_count_uceis)$GI.location <- ordered(sample_data(ps_count_uceis)$GI.location, levels = c('r','s',  't',     'c'),
+                              labels = c('r','s',  't',     'c')) # conversion
+
+ N <- sample_data(ps_count_uceis)$N
+ person_ID <- as.factor(sample_data(ps_count_uceis)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_uceis)$sex)
+ asa <-  as.factor(sample_data(ps_count_uceis)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_uceis)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_uceis)$age_gr)
+ GI <-  sample_data(ps_count_uceis)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_uceis)$uceis)+1)
+ 
+ ggplot()+
+    geom_histogram(aes(x=exp(score_num)))
+ 
+clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+pheno <-  as.data.frame(as.matrix((otu_table(ps_count_uceis)))) #No transformation
+
+f1 <- mms(y=pheno, fixed= ~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num*GI + offset(log(N)))
+
+f1_failed <- c(1,11,14,17)
+
+res_inter <- as.data.frame(get.fixed(f1, part="dist", vr.name="score_num:GI.L"))
+res_inter$p_adj <- p.adjust(res_inter$pvalue, method="BH")
+res_inter$part <- "NB"
+res_inter$bug <- row.names(res_inter)
+res_inter_sig <- res_inter %>% filter(p_adj < 0.05)
+
+res_inter_zero <- as.data.frame(get.fixed(f1, part="zero", vr.name="score_num:GI.L"))
+res_inter_zero$p_adj <- p.adjust(res_inter_zero$pvalue, method="BH")
+res_inter_zero$part <- "ZI"
+res_inter_zero$bug <- row.names(res_inter_zero)
+res_inter_sig_zero <- res_inter_zero %>% filter(p_adj < 0.05)
+
+res1 <- rbind(res_inter_sig, res_inter_sig_zero)
+res1
+
+write.table(res1, file=paste0(main.dir, "results/Uceis_results_score_GI.txt"), col.names=T, row.names=F, sep="\t")
+
+res1_all <- rbind(res_inter, res_inter_zero)
+write.table(res1_all, file=paste0(main.dir, "results/Uceis_results_score_GI_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#These are those where GI location really matter to the phenotype. 
+#Split up by GI and refit the model, testing also age*disease score
+#There is then only one data point pr. patient! No need to include random intercept and correlation structure
+
+#Colon
+ps_count_c <- subset_samples(ps_count_uceis, GI.location=="c")
+
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f1_GI_c_count <- data.frame()
+f1_GI_c_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_c_count <- rbind(f1_GI_c_count, c1)
+   f1_GI_c_zero <- rbind(f1_GI_c_zero, z1)
+}
+
+f1_GI_c_count
+f1_GI_c_zero
+
+f1_GI_c_count$location <- "c"
+f1_GI_c_count$part <- "NB"
+f1_GI_c_zero$location <- "c"
+f1_GI_c_zero$part <- "ZI"
+
+#Rectum
+ps_count_r <- subset_samples(ps_count_uceis, GI.location=="r")
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f1_GI_r_count <- data.frame()
+f1_GI_r_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_r_count <- rbind(f1_GI_r_count, c1)
+   f1_GI_r_zero <- rbind(f1_GI_r_zero, z1)
+}
+
+f1_GI_r_count
+f1_GI_r_zero
+
+f1_GI_r_count$location <- "r"
+f1_GI_r_count$part <- "NB"
+f1_GI_r_zero$location <- "r"
+f1_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+ps_count_s <- subset_samples(ps_count_uceis, GI.location=="s")
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f1_GI_s_count <- data.frame()
+f1_GI_s_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_s_count <- rbind(f1_GI_s_count, c1)
+   f1_GI_s_zero <- rbind(f1_GI_s_zero, z1)
+}
+ 
+f1_GI_s_count
+f1_GI_s_zero
+
+f1_GI_s_count$location <- "s"
+f1_GI_s_count$part <- "NB"
+f1_GI_s_zero$location <- "s"
+f1_GI_s_zero$part <- "ZI"
+
+#Transversum:
+ps_count_t <- subset_samples(ps_count_uceis, GI.location=="t")
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f1_GI_t_count <- data.frame()
+f1_GI_t_zero <- data.frame()
+for (i in unique(res1$bug)){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr*score_num + offset(log(N)) | bmi+sex+asa+age_gr*score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[7,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[7,]))
+   c1$bug <- i
+   z1$bug <- i
+   f1_GI_t_count <- rbind(f1_GI_t_count, c1)
+   f1_GI_t_zero <- rbind(f1_GI_t_zero, z1)
+}
+ 
+f1_GI_t_count
+f1_GI_t_zero
+
+f1_GI_t_count$location <- "t"
+f1_GI_t_count$part <- "NB"
+f1_GI_t_zero$location <- "t"
+f1_GI_t_zero$part <- "ZI"
+
+res2 <- rbind(f1_GI_c_count, f1_GI_c_zero, f1_GI_r_count, f1_GI_r_zero, f1_GI_t_count, f1_GI_t_zero, f1_GI_s_count, f1_GI_s_zero)
+res2
+
+write.table(res2, file=paste0(main.dir, "results/Uceis_results_score_GI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+#For significant ASV: Try to fit within age groups! This can only be done without covariates to have power enough to fit the models
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+
+#Colon - children
+ps_count_c_c <- subset_samples(ps_count_c, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_c)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_c)))) #No transformation
+
+f2_GI_c_c_count <- data.frame()
+f2_GI_c_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_c_count <- rbind(f2_GI_c_c_count, c1)
+   f2_GI_c_c_zero <- rbind(f2_GI_c_c_zero, z1)
+}
+ 
+f2_GI_c_c_count
+f2_GI_c_c_zero
+
+f2_GI_c_c_count$location <- "c"
+f2_GI_c_c_count$part <- "NB"
+f2_GI_c_c_zero$location <- "c"
+f2_GI_c_c_zero$part <- "ZI"
+f2_GI_c_c_count$age_gr <- "Children"
+f2_GI_c_c_zero$age_gr <- "Children"
+
+#Colon - adults:
+ps_count_c_a <- subset_samples(ps_count_c, age_gr=="Adult")
+ N <- sample_data(ps_count_c_a)$N
+ person_ID <- as.factor(sample_data(ps_count_c_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_c_a)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c_a)))) #No transformation
+
+f2_GI_c_a_count <- data.frame()
+f2_GI_c_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_a_count <- rbind(f2_GI_c_a_count, c1)
+   f2_GI_c_a_zero <- rbind(f2_GI_c_a_zero, z1)
+}
+ 
+f2_GI_c_a_count
+f2_GI_c_a_zero
+
+f2_GI_c_a_count$location <- "c"
+f2_GI_c_a_count$part <- "NB"
+f2_GI_c_a_zero$location <- "c"
+f2_GI_c_a_zero$part <- "ZI"
+f2_GI_c_a_count$age_gr <- "Adults"
+f2_GI_c_a_zero$age_gr <- "Adults"
+
+#Rectum - children:
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+#None to be tested!
+
+
+#Sigmoideum - children
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+#None to be tested
+
+#Transversum - children:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[unique(res1$bug) %in% test_filter$bug]
+ps_count_t_c <- subset_samples(ps_count_t, age_gr=="Paediatric")
+ N <- sample_data(ps_count_t_c)$N
+ person_ID <- as.factor(sample_data(ps_count_t_c)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_c)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_c)))) #No transformation
+
+f2_GI_t_c_count <- data.frame()
+f2_GI_t_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_c_count <- rbind(f2_GI_t_c_count, c1)
+   f2_GI_t_c_zero <- rbind(f2_GI_t_c_zero, z1)
+}
+ 
+f2_GI_t_c_count
+f2_GI_t_c_zero
+
+f2_GI_t_c_count$location <- "t"
+f2_GI_t_c_count$part <- "NB"
+f2_GI_t_c_zero$location <- "t"
+f2_GI_t_c_zero$part <- "ZI"
+f2_GI_t_c_count$age_gr <- "Children"
+f2_GI_t_c_zero$age_gr <- "Children"
+
+#Transversum - adults:
+ps_count_t_a <- subset_samples(ps_count_t, age_gr=="Adult")
+ N <- sample_data(ps_count_t_a)$N
+ person_ID <- as.factor(sample_data(ps_count_t_a)$study_id_new_meta)
+ score_num <- log(as.integer( sample_data(ps_count_t_a)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, person_ID, score_num)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t_a)))) #No transformation
+
+f2_GI_t_a_count <- data.frame()
+f2_GI_t_a_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ score_num + offset(log(N)) | score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[2,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[2,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_a_count <- rbind(f2_GI_t_a_count, c1)
+   f2_GI_t_a_zero <- rbind(f2_GI_t_a_zero, z1)
+}
+ 
+f2_GI_t_a_count
+f2_GI_t_a_zero
+
+f2_GI_t_a_count$location <- "t"
+f2_GI_t_a_count$part <- "NB"
+f2_GI_t_a_zero$location <- "t"
+f2_GI_t_a_zero$part <- "ZI"
+f2_GI_t_a_count$age_gr <- "Adults"
+f2_GI_t_a_zero$age_gr <- "Adults"
+
+#Combine all results and save them!
+res2_1 <- rbind(f2_GI_c_c_count, f2_GI_c_c_zero,f2_GI_c_a_count, f2_GI_c_a_zero,f2_GI_t_c_count, f2_GI_t_c_zero,f2_GI_t_a_count, f2_GI_t_a_zero)
+res2_1
+
+write.table(res2_1, file=paste0(main.dir, "results/Uceis_results_score_GI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+
+#For significant ASVs the interaction should be kept! It is not neccesary for the other ASVs, and they should be refit and tested for association with disease score for supplementary.
+
+test_filter <- res2 %>% filter(location =="c" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+#Colon
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_c)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_c)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+f2_GI_c_count <- data.frame()
+f2_GI_c_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_c_count <- rbind(f2_GI_c_count, c1)
+   f2_GI_c_zero <- rbind(f2_GI_c_zero, z1)
+}
+ 
+f2_GI_c_count
+f2_GI_c_zero
+
+f2_GI_c_count$location <- "c"
+f2_GI_c_count$part <- "NB"
+f2_GI_c_zero$location <- "c"
+f2_GI_c_zero$part <- "ZI"
+
+#Rectum
+test_filter <- res2 %>% filter(location =="r" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_r)$N
+ person_ID <- as.factor(sample_data(ps_count_r)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_r)$sex)
+ asa <-  as.factor(sample_data(ps_count_r)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_r)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_r)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_r)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_r)))) #No transformation
+
+f2_GI_r_count <- data.frame()
+f2_GI_r_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_r_count <- rbind(f2_GI_r_count, c1)
+   f2_GI_r_zero <- rbind(f2_GI_r_zero, z1)
+}
+ 
+f2_GI_r_count
+f2_GI_r_zero 
+
+f2_GI_r_count$location <- "r"
+f2_GI_r_count$part <- "NB"
+f2_GI_r_zero$location <- "r"
+f2_GI_r_zero$part <- "ZI"
+
+#Sigmoideum
+test_filter <- res2 %>% filter(location =="s" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_s)$N
+ person_ID <- as.factor(sample_data(ps_count_s)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_s)$sex)
+ asa <-  as.factor(sample_data(ps_count_s)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_s)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_s)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_s)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_s)))) #No transformation
+
+f2_GI_s_count <- data.frame()
+f2_GI_s_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_s_count <- rbind(f2_GI_s_count, c1)
+   f2_GI_s_zero <- rbind(f2_GI_s_zero, z1)
+}
+ 
+f2_GI_s_count
+f2_GI_s_zero
+
+f2_GI_s_count$location <- "s"
+f2_GI_s_count$part <- "NB"
+f2_GI_s_zero$location <- "s"
+f2_GI_s_zero$part <- "ZI"
+
+#Transversum:
+test_filter <- res2 %>% filter(location =="t" & `Pr(>|z|)` < 0.05)
+test_GI <- unique(res1$bug)[!unique(res1$bug) %in% test_filter$bug]
+
+ N <- sample_data(ps_count_t)$N
+ person_ID <- as.factor(sample_data(ps_count_t)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_t)$sex)
+ asa <-  as.factor(sample_data(ps_count_t)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_t)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_t)$age_gr)
+ score_num <- log(as.integer( sample_data(ps_count_t)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_t)))) #No transformation
+
+f2_GI_t_count <- data.frame()
+f2_GI_t_zero <- data.frame()
+for (i in test_GI){
+   form <- as.formula(paste0("pheno$", i, " ~ bmi+sex+asa+age_gr+score_num + offset(log(N)) | bmi+sex+asa+age_gr+score_num + offset(log(N))"))
+   m1 <- zeroinfl(form,  data = clinical, dist = "negbin")
+   test <- summary(m1)
+   c1 <- as.data.frame(t(test$coefficients$count[6,]))
+   z1 <- as.data.frame(t(test$coefficients$zero[6,]))
+   c1$bug <- i
+   z1$bug <- i
+   f2_GI_t_count <- rbind(f2_GI_t_count, c1)
+   f2_GI_t_zero <- rbind(f2_GI_t_zero, z1)
+}
+ 
+f2_GI_t_count
+f2_GI_t_zero
+
+f2_GI_t_count$location <- "t"
+f2_GI_t_count$part <- "NB"
+f2_GI_t_zero$location <- "t"
+f2_GI_t_zero$part <- "ZI"
+
+#All these results should be summarised somehow
+res3 <- rbind(f2_GI_c_count, f2_GI_c_zero, f2_GI_r_count, f2_GI_r_zero, f2_GI_t_count, f2_GI_t_zero, f2_GI_s_count, f2_GI_s_zero)
+res3
+
+write.table(res3, file=paste0(main.dir, "results/Uceis_results_score_GI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+################
+#Now we come to those taxa, where the GI location was not important for disease score interaction. Here, I just fit the model again, but excluding interaction with GI. I now investigate the interaction between age and disease score 
+
+ N <- sample_data(ps_count_uceis)$N
+ person_ID <- as.factor(sample_data(ps_count_uceis)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_uceis)$sex)
+ asa <-  as.factor(sample_data(ps_count_uceis)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_uceis)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_uceis)$age_gr)
+ GI <-  sample_data(ps_count_uceis)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_uceis)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_uceis)))) #No transformation
+
+ test_noGI <- colnames(pheno)[!colnames(pheno) %in% unique(res1$bug)]
+
+f1_noGI <- mms(y=pheno[, test_noGI], fixed= ~bmi+sex+asa+age_gr*score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr*score_num + offset(log(N)))
+
+f1_noGI_failed <- c(1,10,15,24,52)
+
+res_inter_noGI <- as.data.frame(get.fixed(f1_noGI, part="dist", vr.name="age_grAdult:score_num"))
+res_inter_noGI$p_adj <- p.adjust(res_inter_noGI$pvalue, method="BH")
+res_inter_noGI$bug <- row.names(res_inter_noGI)
+res_inter_noGI$part <- "NB"
+res_inter_noGI_sig <- res_inter_noGI %>% filter(p_adj < 0.05)
+
+res_inter_noGI_zero <- as.data.frame(get.fixed(f1_noGI, part="zero", vr.name="age_grAdult:score_num"))
+res_inter_noGI_zero$p_adj <- p.adjust(res_inter_noGI_zero$pvalue, method="BH")
+res_inter_noGI_zero$bug <- row.names(res_inter_noGI_zero)
+res_inter_noGI_zero$part <- "ZI"
+res_inter_noGI_sig_zero <- res_inter_noGI_zero %>% filter(p_adj < 0.05)
+
+res4 <- rbind(res_inter_noGI_sig, res_inter_noGI_sig_zero)
+res4
+
+write.table(res4, file=paste0(main.dir, "results/Uceis_results_score_noGI_age.txt"), col.names=T, row.names=F, sep="\t")
+
+res4_all <- rbind(res_inter_noGI, res_inter_noGI_zero)
+write.table(res4_all, file=paste0(main.dir, "results/Uceis_results_score_noGI_age_all.txt"), col.names=T, row.names=F, sep="\t")
+
+#Split into age groups and test again
+#Children:
+ps_count_c <- subset_samples(ps_count_uceis, age_gr=="Paediatric")
+ N <- sample_data(ps_count_c)$N
+ person_ID <- as.factor(sample_data(ps_count_c)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_c)$sex)
+ asa <-  as.factor(sample_data(ps_count_c)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_c)$bmi)
+ GI <-  sample_data(ps_count_c)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_c)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_c)))) #No transformation
+
+ test_age <- colnames(pheno)[colnames(pheno) %in% unique(res4$bug)]
+
+f1_noGI_c <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_c <- as.data.frame(get.fixed(f1_noGI_c, part="dist", vr.name="score_num"))
+res_inter_noGI_c$p_adj <- p.adjust(res_inter_noGI_c$pvalue, method="BH")
+res_inter_noGI_c$bug <- row.names(res_inter_noGI_c)
+res_inter_noGI_c$part <- "NB"
+res_inter_noGI_c$age_gr <- "Children"
+
+res_inter_noGI_c_zero <- as.data.frame(get.fixed(f1_noGI_c, part="zero", vr.name="score_num"))
+res_inter_noGI_c_zero$p_adj <- p.adjust(res_inter_noGI_c_zero$pvalue, method="BH")
+res_inter_noGI_c_zero$bug <- row.names(res_inter_noGI_c_zero)
+res_inter_noGI_c_zero$part <- "ZI"
+res_inter_noGI_c_zero$age_gr <- "Children"
+
+#Adults:
+ps_count_a <- subset_samples(ps_count_uceis, age_gr=="Adult")
+ N <- sample_data(ps_count_a)$N
+ person_ID <- as.factor(sample_data(ps_count_a)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_a)$sex)
+ asa <-  as.factor(sample_data(ps_count_a)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_a)$bmi)
+ GI <-  sample_data(ps_count_a)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_a)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_a)))) #No transformation
+
+f1_noGI_a <- mms(y=pheno[, test_age], fixed= ~bmi+sex+asa+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+score_num + offset(log(N)))
+
+res_inter_noGI_a <- as.data.frame(get.fixed(f1_noGI_a, part="dist", vr.name="score_num"))
+res_inter_noGI_a$p_adj <- p.adjust(res_inter_noGI_a$pvalue, method="BH")
+res_inter_noGI_a$bug <- row.names(res_inter_noGI_a)
+res_inter_noGI_a$part <- "NB"
+res_inter_noGI_a$age_gr <- "Adults"
+
+res_inter_noGI_a_zero <- as.data.frame(get.fixed(f1_noGI_a, part="zero", vr.name="score_num"))
+res_inter_noGI_a_zero$p_adj <- p.adjust(res_inter_noGI_a_zero$pvalue, method="BH")
+res_inter_noGI_a_zero$bug <- row.names(res_inter_noGI_a_zero)
+res_inter_noGI_a_zero$part <- "ZI"
+res_inter_noGI_a_zero$age_gr <- "Adults"
+
+#Combine and save:
+res4_1 <- rbind(res_inter_noGI_c, res_inter_noGI_c_zero,res_inter_noGI_a, res_inter_noGI_a_zero)
+res4_1
+write.table(res4_1, file=paste0(main.dir, "results/Uceis_results_score_noGI_withinAge.txt"), col.names=T, row.names=F, sep="\t")
+
+
+#Those that were not significant: Refit without interaction term and test just disease score for the supplementary
+ N <- sample_data(ps_count_uceis)$N
+ person_ID <- as.factor(sample_data(ps_count_uceis)$study_id_new_meta)
+ sex <-  as.factor(sample_data(ps_count_uceis)$sex)
+ asa <-  as.factor(sample_data(ps_count_uceis)$previous_asa)
+ bmi <-  as.numeric(sample_data(ps_count_uceis)$bmi)
+ age_gr <-  as.factor(sample_data(ps_count_uceis)$age_gr)
+ GI <-  sample_data(ps_count_uceis)$GI.location
+ 
+ score_num <- log(as.integer( sample_data(ps_count_uceis)$uceis)+1)
+ 
+ clinical = cbind.data.frame(N, bmi, person_ID, sex, asa, score_num, age_gr, GI)
+ pheno <-  as.data.frame(as.matrix((otu_table(ps_count_uceis)))) #No transformation
+test_noGI_noage <- test_noGI[!test_noGI %in% res4$bug] 
+f2_noGI <- mms(y=pheno[, test_noGI_noage], fixed= ~bmi+sex+asa+age_gr+score_num + offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corLin(form=~GI|person_ID), zi_fixed=~bmi+sex+asa+age_gr+score_num + offset(log(N)))
+
+f2_noGI_failed <- c(1,2,3,5,9,14)
+test_noGI_noage[f2_noGI_failed]
+
+res_disease_noGI <- as.data.frame(get.fixed(f2_noGI, part="dist", vr.name="score_num"))
+res_disease_noGI$p_adj <- p.adjust(res_disease_noGI$pvalue, method="BH")
+res_disease_noGI$bug <- row.names(res_disease_noGI)
+res_disease_noGI$part <- "NB"
+res_disease_noGI_sig <- res_disease_noGI %>% filter(p_adj < 0.05)
+
+res_disease_noGI_zero <- as.data.frame(get.fixed(f2_noGI, part="zero", vr.name="score_num"))
+res_disease_noGI_zero$p_adj <- p.adjust(res_disease_noGI_zero$pvalue, method="BH")
+res_disease_noGI_zero$bug <- row.names(res_disease_noGI_zero)
+res_disease_noGI_zero$part <- "ZI"
+res_disease_noGI_sig_zero <- res_disease_noGI_zero %>% filter(p_adj < 0.05)
+
+res5 <- rbind(res_disease_noGI_sig, res_disease_noGI_sig_zero)
+res5
+
+write.table(res5, file=paste0(main.dir, "results/Uceis_results_score_noGI_noAge.txt"), col.names=T, row.names=F, sep="\t")
+
+res5_all <- rbind(res_disease_noGI, res_disease_noGI_zero)
+write.table(res5_all, file=paste0(main.dir, "results/Uceis_results_score_noGI_noAge_all.txt"), col.names=T, row.names=F, sep="\t")
+```
+
+
+
+# Gather all the results and compare using heatmaps
+
+```{r echo=TRUE}
+#First those species, that associate differently with disease score across GI locations:
+score_gi_clinical <- read.delim(file=paste0(main.dir, "results/Clinical_results_score_GI.txt"), header = T, sep="\t")
+score_gi_clinical$score <-  "Clinical"
+score_gi_fcal <- read.delim(file=paste0(main.dir, "results/Fcal_results_score_GI.txt"), header = T, sep="\t")
+score_gi_fcal$score <- "Faecal calprotectin"
+score_gi_geb <- read.delim(file=paste0(main.dir, "results/Geboes_results_score_GI.txt"), header = T, sep="\t")
+score_gi_geb$score <- "Geboes"
+score_gi_uceis <- read.delim(file=paste0(main.dir, "results/Uceis_results_score_GI.txt"), header = T, sep="\t")
+score_gi_uceis$score <- "Uceis"
+
+score_gi <- rbind(score_gi_clinical, score_gi_fcal, score_gi_geb, score_gi_uceis)
+score_gi$bugs <- paste0(tax_table(ps_count_spe)[score_gi$bug, c("Genus")], " ", tax_table(ps_count_spe)[score_gi$bug, c("Species")]) 
+
+score_gi$new_estimate <- ifelse(score_gi$part =="ZI", -score_gi$Estimate, score_gi$Estimate)
+score_gi$score_part <- ifelse(score_gi$score =="Clinical" & score_gi$part == "NB", "Clinical: NB", ifelse(score_gi$score =="Clinical" & score_gi$part == "ZI", "Clinical: ZI", ifelse(score_gi$score =="Faecal calprotectin" & score_gi$part == "NB", "Faecal calprotectin: NB", ifelse(score_gi$score =="Faecal calprotectin" & score_gi$part == "ZI", "Faecal calprotectin: ZI", ifelse(score_gi$score =="Geboes" & score_gi$part == "NB", "Geboes: NB",ifelse(score_gi$score =="Geboes" & score_gi$part == "ZI", "Geboes: ZI", ifelse(score_gi$score =="Uceis" & score_gi$part == "NB", "Uceis: NB", "Uceis: ZI")) )))))
+
+min(score_gi$new_estimate)
+max(score_gi$new_estimate)
+bl <- colorRampPalette(c("navy","royalblue","lightskyblue"))(200)   
+re <- colorRampPalette(c("mistyrose", "red2","darkred"))(200)
+
+ggplot(data=score_gi, aes(x=score_part, y=bugs))+
+  geom_tile(aes(fill=new_estimate))+
+   geom_text(aes(label=part))+
+   ylab("")+xlab(" ")+
+  scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-6.6, 6.6))+theme_classic()+theme(axis.text.x = element_text(angle = 90))+labs(fill="Estimate")
+
+#Species, where GI is not important, and with significant interaction between age group and disease score
+score_age_clinical <- read.delim(file=paste0(main.dir, "results/Clinical_results_score_noGI_age.txt"), header = T, sep="\t")
+score_age_clinical$score <-  "Clinical"
+score_age_fcal <- read.delim(file=paste0(main.dir, "results/Fcal_results_score_noGI_age.txt"), header = T, sep="\t")
+score_age_fcal$score <- "Faecal calprotectin"
+score_age_geb <- read.delim(file=paste0(main.dir, "results/Geboes_results_score_noGI_age.txt"), header = T, sep="\t")
+score_age_geb$score <- "Geboes"
+score_age_uceis <- read.delim(file=paste0(main.dir, "results/Uceis_results_score_noGI_age.txt"), header = T, sep="\t")
+score_age_uceis$score <- "Uceis"
+
+score_age <- rbind(score_age_clinical, score_age_fcal, score_age_geb, score_age_uceis)
+score_age$bugs <- paste0(tax_table(ps_count_spe)[score_age$bug, c("Genus")], " ", tax_table(ps_count_spe)[score_age$bug, c("Species")])
+
+score_age$new_estimate <- ifelse(score_age$part =="ZI", -score_age$Estimate, score_age$Estimate)
+score_age$score_part <- ifelse(score_age$score =="Clinical" & score_age$part == "NB", "Clinical: NB", ifelse(score_age$score =="Clinical" & score_age$part == "ZI", "Clinical: ZI", ifelse(score_age$score =="Faecal calprotectin" & score_age$part == "NB", "Faecal calprotectin: NB", ifelse(score_age$score =="Faecal calprotectin" & score_age$part == "ZI", "Faecal calprotectin: ZI", ifelse(score_age$score =="Geboes" & score_age$part == "NB", "Geboes: NB",ifelse(score_age$score =="Geboes" & score_age$part == "ZI", "Geboes: ZI", ifelse(score_age$score =="Uceis" & score_age$part == "NB", "Uceis: NB", "Uceis: ZI")) )))))
+
+min(score_age$Estimate)
+max(score_age$Estimate)
+
+ggplot(data=score_age, aes(x=score_part, y=bugs))+
+  geom_tile(aes(fill=new_estimate))+
+   geom_text(aes(label=part))+
+   ylab("")+xlab(" ")+
+  scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-12.1, 12.1))+theme_classic()+theme(axis.text.x = element_text(angle = 90))+labs(fill="Estimate")
+
+#Species where GI and age is not important for association with disease score
+score_clinical <- read.delim(file=paste0(main.dir, "results/Clinical_results_score_noGI_noAge.txt"), header = T, sep="\t")
+score_clinical$score <-  "Clinical"
+score_fcal <- read.delim(file=paste0(main.dir, "results/Fcal_results_score_noGI_noAge.txt"), header = T, sep="\t")
+score_fcal$score <- "Faecal calprotectin"
+score_geb <- read.delim(file=paste0(main.dir, "results/Geboes_results_score_noGI_noAge.txt"), header = T, sep="\t")
+score_geb$score <- "Geboes"
+score_uceis <- read.delim(file=paste0(main.dir, "results/Uceis_results_score_noGI_noAge.txt"), header = T, sep="\t")
+score_uceis$score <- "Uceis"
+
+score_plain <- rbind(score_clinical, score_fcal, score_geb, score_uceis)
+score_plain$bugs <- paste0(tax_table(ps_count_spe)[score_plain$bug, c("Genus")], " ", tax_table(ps_count_spe)[score_plain$bug, c("Species")])
+
+score_plain$new_estimate <- ifelse(score_plain$part =="ZI", -score_plain$Estimate, score_plain$Estimate)
+score_plain$score_part <- ifelse(score_plain$score =="Clinical" & score_plain$part == "NB", "Clinical: NB", ifelse(score_plain$score =="Clinical" & score_plain$part == "ZI", "Clinical: ZI", ifelse(score_plain$score =="Faecal calprotectin" & score_plain$part == "NB", "Faecal calprotectin: NB", ifelse(score_plain$score =="Faecal calprotectin" & score_plain$part == "ZI", "Faecal calprotectin: ZI", ifelse(score_plain$score =="Geboes" & score_plain$part == "NB", "Geboes: NB",ifelse(score_plain$score =="Geboes" & score_plain$part == "ZI", "Geboes: ZI", ifelse(score_plain$score =="Uceis" & score_plain$part == "NB", "Uceis: NB", "Uceis: ZI")) )))))
+
+min(score_plain$Estimate)
+max(score_plain$Estimate)
+
+ggplot(data=score_plain, aes(x=score_part, y=bugs))+
+  geom_tile(aes(fill=new_estimate))+
+   geom_text(aes(label=part))+
+   ylab("")+xlab(" ")+
+  scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-5, 5))+theme_classic()+theme(axis.text.x = element_text(angle = 90))+labs(fill="Estimate")
+
+
+#Within those where GI matter to the score, which are also influenced by age group?
+score_gi_age_clinical <- read.delim(file=paste0(main.dir, "results/Clinical_results_score_GI_age.txt"), header = T, sep="\t")
+score_gi_age_clinical_sig <- score_gi_age_clinical %>%filter(Pr...z.. <0.05)
+score_gi_age_clinical_sig$test <- ifelse(score_gi_age_clinical_sig$part =="NB", paste0("Clinical: ", score_gi_age_clinical_sig$location, ", NB"), paste0("Clinical: ", score_gi_age_clinical_sig$location, ", ZI"))
+
+score_gi_age_fcal <- read.delim(file=paste0(main.dir, "results/Fcal_results_score_GI_age.txt"), header = T, sep="\t")
+score_gi_age_fcal_sig <- score_gi_age_fcal %>%filter(Pr...z.. <0.05)
+score_gi_age_fcal_sig$test <- ifelse(score_gi_age_fcal_sig$part =="NB", paste0("Faecal calprotectin: ", score_gi_age_fcal_sig$location, ", NB"), paste0("Faecal calprotectin: ", score_gi_age_fcal_sig$location, ", ZI"))
+
+score_gi_age_geb <- read.delim(file=paste0(main.dir, "results/Geboes_results_score_GI_age.txt"), header = T, sep="\t")
+score_gi_age_geb_sig <- score_gi_age_geb %>%filter(Pr...z.. <0.05)
+score_gi_age_geb_sig$test <- ifelse(score_gi_age_geb_sig$part =="NB", paste0("Geboes: ", score_gi_age_geb_sig$location, ", NB"), paste0("Geboes: ", score_gi_age_geb_sig$location, ", ZI"))
+
+score_gi_age_uceis <- read.delim(file=paste0(main.dir, "results/Uceis_results_score_GI_age.txt"), header = T, sep="\t")
+score_gi_age_uceis_sig <- score_gi_age_uceis %>%filter(Pr...z.. <0.05)
+score_gi_age_uceis_sig$test <- ifelse(score_gi_age_uceis_sig$part =="NB", paste0("Uceis: ", score_gi_age_uceis_sig$location, ", NB"), paste0("Uceis: ", score_gi_age_uceis_sig$location, ", ZI"))
+
+score_gi_age <- rbind(score_gi_age_clinical_sig, score_gi_age_fcal_sig, score_gi_age_geb_sig, score_gi_age_uceis_sig)
+score_gi_age$bugs <- paste0(tax_table(ps_count_spe)[score_gi_age$bug, c("Genus")], " ", tax_table(ps_count_spe)[score_gi_age$bug, c("Species")])
+
+score_gi_age$new_estimate <- ifelse(score_gi_age$part =="ZI", -score_gi_age$Estimate, score_gi_age$Estimate)
+
+min(score_gi_age$Estimate)
+max(score_gi_age$Estimate)
+
+ggplot(data=score_gi_age, aes(x=test, y=bugs))+
+  geom_tile(aes(fill=new_estimate))+
+   geom_text(aes(label=part))+
+   ylab("")+xlab(" ")+
+  scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-17.6, 17.6))+theme_classic()+theme(axis.text.x = element_text(angle = 90))+labs(fill="Estimate")
+
+#Within those where GI matter to the score, which are significant for just disease score?
+score_gi_s_clinical <- read.delim(file=paste0(main.dir, "results/Clinical_results_score_GI_noAge.txt"), header = T, sep="\t")
+score_gi_s_clinical_sig <- score_gi_s_clinical %>%filter(Pr...z.. <0.05)
+score_gi_s_clinical_sig$test <- ifelse(score_gi_s_clinical_sig$part =="NB", paste0("Clinical: ", score_gi_s_clinical_sig$location, ", NB"), paste0("Clinical: ", score_gi_s_clinical_sig$location, ", ZI"))
+
+score_gi_s_fcal <- read.delim(file=paste0(main.dir, "results/Fcal_results_score_GI_noAge.txt"), header = T, sep="\t")
+score_gi_s_fcal_sig <- score_gi_s_fcal %>%filter(Pr...z.. <0.05)
+score_gi_s_fcal_sig$test <- ifelse(score_gi_s_fcal_sig$part =="NB", paste0("Faecal calprotectin: ", score_gi_s_fcal_sig$location, ", NB"), paste0("Faecal calprotectin: ", score_gi_s_fcal_sig$location, ", ZI"))
+
+score_gi_s_geb <- read.delim(file=paste0(main.dir, "results/Geboes_results_score_GI_noAge.txt"), header = T, sep="\t")
+score_gi_s_geb_sig <- score_gi_s_geb %>%filter(Pr...z.. <0.05)
+score_gi_s_geb_sig$test <- ifelse(score_gi_s_geb_sig$part =="NB", paste0("Geboes: ", score_gi_s_geb_sig$location, ", NB"), paste0("Geboes: ", score_gi_s_geb_sig$location, ", ZI"))
+
+score_gi_s_uceis <- read.delim(file=paste0(main.dir, "results/Uceis_results_score_GI_noAge.txt"), header = T, sep="\t")
+score_gi_s_uceis_sig <- score_gi_s_uceis %>%filter(Pr...z.. <0.05)
+score_gi_s_uceis_sig$test <- ifelse(score_gi_s_uceis_sig$part =="NB", paste0("Uceis: ", score_gi_s_uceis_sig$location, ", NB"), paste0("Uceis: ", score_gi_s_uceis_sig$location, ", ZI"))
+
+score_gi_s <- rbind(score_gi_s_clinical_sig, score_gi_s_fcal_sig, score_gi_s_geb_sig, score_gi_s_uceis_sig)
+score_gi_s$bugs <- paste0(tax_table(ps_count_spe)[score_gi_s$bug, c("Genus")], " ", tax_table(ps_count_spe)[score_gi_s$bug, c("Species")])
+
+score_gi_s$new_estimate <- ifelse(score_gi_s$part =="ZI", -score_gi_s$Estimate, score_gi_s$Estimate)
+
+min(score_gi_s$Estimate)
+max(score_gi_s$Estimate)
+
+ggplot(data=score_gi_s, aes(x=test, y=bugs))+
+  geom_tile(aes(fill=new_estimate))+
+   geom_text(aes(label=part))+
+   ylab("")+xlab(" ")+
+  scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-4.6, 4.6))+theme_classic()+theme(axis.text.x = element_text(angle = 90))+labs(fill="Estimate")
+
+look_up <- as.data.frame(tax_table(ps_count))
+look_up$genusspecies <- paste0(look_up$Genus, " ", look_up$Species)
+```
