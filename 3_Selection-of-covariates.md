@@ -127,6 +127,287 @@ dim(meta) #202 samples left
 write.table(meta, file=paste0(path, "metadata/", "preped_metadata_filtered.txt"), col.names = T, row.names = F, quote = F, sep = '\t')
 ```
 
+Look into the samples left:
+
+``` r
+#Split samples by timepoint:
+t0 <- meta %>% filter(time_point==0)
+dim(t0)
+```
+
+    ## [1] 37 92
+
+``` r
+t1 <- meta %>% filter(time_point==1)
+dim(t1)
+```
+
+    ## [1] 40 92
+
+``` r
+t2 <- meta %>% filter(time_point==2)
+dim(t2)
+```
+
+    ## [1] 45 92
+
+``` r
+t3 <- meta %>% filter(time_point==3)
+dim(t3)
+```
+
+    ## [1] 43 92
+
+``` r
+t4 <- meta %>% filter(time_point==4)
+dim(t4)
+```
+
+    ## [1] 37 92
+
+``` r
+#How many female/male (0/1) in each?
+dim(t0 %>% filter(sex==0))
+```
+
+    ## [1] 24 92
+
+``` r
+dim(t0 %>% filter(sex==1))
+```
+
+    ## [1] 13 92
+
+``` r
+dim(t1 %>% filter(sex==0))
+```
+
+    ## [1] 23 92
+
+``` r
+dim(t1 %>% filter(sex==1))
+```
+
+    ## [1] 17 92
+
+``` r
+dim(t2 %>% filter(sex==0))
+```
+
+    ## [1] 26 92
+
+``` r
+dim(t2 %>% filter(sex==1))
+```
+
+    ## [1] 19 92
+
+``` r
+dim(t3 %>% filter(sex==0))
+```
+
+    ## [1] 25 92
+
+``` r
+dim(t3 %>% filter(sex==1))
+```
+
+    ## [1] 18 92
+
+``` r
+dim(t4 %>% filter(sex==0))
+```
+
+    ## [1] 23 92
+
+``` r
+dim(t4 %>% filter(sex==1))
+```
+
+    ## [1] 14 92
+
+``` r
+#How many children/adults (1/2) in each?
+dim(t0 %>% filter(age_gr==1))
+```
+
+    ## [1] 22 92
+
+``` r
+dim(t0 %>% filter(age_gr==2))
+```
+
+    ## [1] 15 92
+
+``` r
+dim(t1 %>% filter(age_gr==1))
+```
+
+    ## [1] 25 92
+
+``` r
+dim(t1 %>% filter(age_gr==2))
+```
+
+    ## [1] 15 92
+
+``` r
+dim(t2 %>% filter(age_gr==1))
+```
+
+    ## [1] 25 92
+
+``` r
+dim(t2 %>% filter(age_gr==2))
+```
+
+    ## [1] 20 92
+
+``` r
+dim(t3 %>% filter(age_gr==1))
+```
+
+    ## [1] 23 92
+
+``` r
+dim(t3 %>% filter(age_gr==2))
+```
+
+    ## [1] 20 92
+
+``` r
+dim(t4 %>% filter(age_gr==1))
+```
+
+    ## [1] 20 92
+
+``` r
+dim(t4 %>% filter(age_gr==2))
+```
+
+    ## [1] 17 92
+
+``` r
+#How many with remission/mild/moderate/severe disease?
+dim(t0 %>% filter(score_num==1))
+```
+
+    ## [1]  7 92
+
+``` r
+dim(t0 %>% filter(score_num==2))
+```
+
+    ## [1] 16 92
+
+``` r
+dim(t0 %>% filter(score_num==3))
+```
+
+    ## [1] 12 92
+
+``` r
+dim(t0 %>% filter(score_num==4))
+```
+
+    ## [1]  2 92
+
+``` r
+dim(t1 %>% filter(score_num==1))
+```
+
+    ## [1] 27 92
+
+``` r
+dim(t1 %>% filter(score_num==2))
+```
+
+    ## [1]  9 92
+
+``` r
+dim(t1 %>% filter(score_num==3))
+```
+
+    ## [1]  2 92
+
+``` r
+dim(t1 %>% filter(score_num==4))
+```
+
+    ## [1]  1 92
+
+``` r
+dim(t2 %>% filter(score_num==1))
+```
+
+    ## [1] 32 92
+
+``` r
+dim(t2 %>% filter(score_num==2))
+```
+
+    ## [1]  7 92
+
+``` r
+dim(t2 %>% filter(score_num==3))
+```
+
+    ## [1]  4 92
+
+``` r
+dim(t2 %>% filter(score_num==4))
+```
+
+    ## [1]  0 92
+
+``` r
+dim(t3 %>% filter(score_num==1))
+```
+
+    ## [1] 36 92
+
+``` r
+dim(t3 %>% filter(score_num==2))
+```
+
+    ## [1]  5 92
+
+``` r
+dim(t3 %>% filter(score_num==3))
+```
+
+    ## [1]  0 92
+
+``` r
+dim(t3 %>% filter(score_num==4))
+```
+
+    ## [1]  0 92
+
+``` r
+dim(t4 %>% filter(score_num==1))
+```
+
+    ## [1] 28 92
+
+``` r
+dim(t4 %>% filter(score_num==2))
+```
+
+    ## [1]  8 92
+
+``` r
+dim(t4 %>% filter(score_num==3))
+```
+
+    ## [1]  1 92
+
+``` r
+dim(t4 %>% filter(score_num==4))
+```
+
+    ## [1]  0 92
+
 # Investigate predicters: Correlation and distribution
 
 Investigate VIF and correlation coefficients
@@ -277,21 +558,21 @@ Are disease score and numeric predicters normally distributed?
 ggplot(meta)+geom_histogram(aes(x=BMI), fill="lightblue", color="black")+theme_classic()
 ```
 
-![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
 
 ``` r
 #Check faecal calprotectin:
 ggplot(meta)+geom_histogram(aes(x=f_cal_current), fill="lightblue", color="black")+theme_classic()
 ```
 
-![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-8-2.png)<!-- -->
+![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-9-2.png)<!-- -->
 
 ``` r
 #Check discrete numeric disease score:
 ggplot(meta)+geom_histogram(aes(x=score_num), fill="lightblue", color="black")+theme_classic()
 ```
 
-![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-8-3.png)<!-- -->
+![](3_Selection-of-covariates_files/figure-gfm/unnamed-chunk-9-3.png)<!-- -->
 
 BMI is roughly normally distributed. The two disease scores are not, and
 this must be considered in further analyses.
