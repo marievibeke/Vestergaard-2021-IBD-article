@@ -8,13 +8,16 @@ editor_options:
 ---
 # Load in the packages and path to folder:
 ```{r echo=T, message=F, error=F, warning=F}
-library(tidyverse)
 library(phyloseq)
 library(vegan)
 library(zCompositions)
 library(rgr)
 library(NBZIMM)
-path = "C:/Users/Tom/Documents/10. semester/V1/data/"
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+path = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/data/"
 
 ```
 
@@ -63,15 +66,9 @@ Read in the metadata:
 ```{r echo=T, message=F, error=F, warning=F}
 meta <-  read_delim(file = paste0(path, "metadata/Tilpasset_metadata.txt"), col_names = T, delim= "\t")
 meta <- as_tibble(meta)
-```
-
-```{r}
 dim(meta)
 
-#Calculate BMI
-meta <- meta %>% mutate(BMI = weight/(height/100)^2)
-
-#Make column with categorical clinical disease score
+#Make column with categorical clinical disease score for both children and adults
 meta <- meta %>% mutate(score_p = ifelse(pucai_current < 10, "remission", ifelse(pucai_current <= 34, "mild", ifelse(pucai_current<=64, "moderate", ifelse(pucai_current>64, "severe", "NA")))))
 
 meta <- meta %>% mutate(score_s = ifelse(sccai_current<3, "remission", ifelse(sccai_current<=5, "mild", ifelse(sccai_current<=11, "moderate", ifelse(sccai_current>11, "severe", "NA")))))
@@ -87,12 +84,6 @@ meta$score_binary <- as.factor(ifelse(meta$score == "remission", 0, 1))
 
 meta$fcal_binary <- as.factor(ifelse(meta$f_cal_current < 250, 0, 1))
 
-#Make merged treatment column for 5-ASA and prednisolone:
-meta$pred_total <- ifelse(meta$pred==1 | meta$l_pred ==1, 1, 0)
-meta$asa_total <- ifelse(meta$asa==1 | meta$l_asa ==1, 1, 0)
-```
-
-```{r echo=T, message=F, error=F, warning=F}
 #Read in the total read depth and add to meta data:
 qc_stats <-  read_delim(file = paste0(path, "../analysis/summary_stats_of_QC.txt"), col_names = T, delim= "\t")
 qc_stats$rdepth <- as.numeric(gsub(",", "", qc_stats$clean_R1))*2
@@ -133,10 +124,6 @@ dim(children %>% filter(study_gr==2))
 dim(adults %>% filter(study_gr==1))
 dim(adults %>% filter(study_gr==2))
 
-#BMI:
-summary(children$BMI)
-summary(adults$BMI)
-
 #Treatment before baseline:
 dim(children %>% filter(asa_0 == 1))
 dim(adults %>% filter(asa_0 == 1))
@@ -160,7 +147,6 @@ dim(children %>% filter(asa_0 ==0 &pred_0 == 0 &aza_0 == 0 &bio_0 == 0 &l_asa_0 
 dim(adults %>% filter(asa_0 ==0 &pred_0 == 0 &aza_0 == 0 &bio_0 == 0 &l_asa_0 == 0 & l_pred_0 == 0))
 
 ```
-
 
 Read in the MetaPhlan count data and transform it into phyloseq object:
 ```{r}
@@ -249,29 +235,20 @@ ggplot()+
   geom_vline(xintercept = 10000, linetype = "dashed")
     
 min(sample_sums(ps_count))
+
 #Remove sample with read depth below 10,000:
 ps_sub = prune_samples(sample_sums(ps_count)>=10000, ps_count)
 ps_sub #207 samples - one was removed
 
 saveRDS(ps_sub, paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
 
-#Which sample was removed? It should also be removed in the dataset with relative abundance:
+#Which sample was removed? It should also be removed in the data set with relative abundance:
 removed <- setdiff(sample_names(ps_count), sample_names((ps_sub)))
 removed #J28550
 ps_relab_sub <- subset_samples(ps_relab, !(J_ID %in% removed))
 ps_relab_sub #207 samples and 550 taxa
     
 saveRDS(ps_relab_sub,paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
-
-```
-
-```{r}
-meta$age_gr1 <- ifelse(meta$age_gr==1, "Children", "Adults")
-meta$age_gr1 <- factor(meta$age_gr1, levels=c("Children", "Adults"))
-ggplot(data=meta, aes(x=as.factor(time_point), fill=age_gr1))+
-  geom_bar(position = "stack")+theme_classic()+xlab("Time point")+ylab("Samples")+labs(fill="Age group")
-ggplot(data=meta, aes(x=as.factor(time_point)))+
-  geom_bar(position = "stack")+theme_classic()+xlab("Time point")+ylab("Samples")+labs(fill="Age group")
 ```
 
 
@@ -297,16 +274,6 @@ ggplot(temp)+
   geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
   xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())
 
-#Divided into sex:
-ggplot(temp)+
-  geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
-  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
-
-#Divided by age group:
-ggplot(temp)+
-  geom_bar(aes(x=Sample, y= Abundance, fill = Phylum), stat = "identity", position = "stack")+
-  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
-
 
 #Based on Class:
 temp <- ps_relab %>% tax_glom(taxrank = "Class") %>% psmelt() %>% filter(Abundance > 2)
@@ -316,10 +283,12 @@ ggplot(temp)+
   geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
   xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~sex, scales="free_x")
 
-#Divided by age group:
+#Divided by age group and study group:
+temp$age_gr <- ifelse(temp$age_gr == 1, "Pediatric", "Adult")
+temp$study_gr <- ifelse(temp$study_gr == 1, "Newly diagnosed", "Older diagnosis")
 ggplot(temp)+
   geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
-  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr, scales="free_x")
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr+study_gr, scales="free_x")
 
 #Based on Order:
 temp <- ps_relab %>% tax_glom(taxrank = "Order") %>% psmelt() %>% filter(Abundance > 2)
@@ -346,7 +315,6 @@ ggplot(temp)+
 
 For Genus and Species plots, the legend is not shown, is it would be too large:
 ```{r}
-
 #Based on Genus:
 temp <- ps_relab %>% tax_glom(taxrank = "Genus") %>% psmelt() %>% filter(Abundance > 2)
 #Divided into sex:
@@ -389,16 +357,13 @@ write.table(alpha_div, paste0(path, "humann3_processed_output/processed_tables/"
 
 ```
 
-
 Calculate alpha diversity based on relative abundance and investigate the correlation:
 ```{r}
 matrix_spec <- t(otu_table(ps_relab))
 div_shannon_003 <- diversity(matrix_spec, index="shannon")  ### Shannon entropy
-div_simpson_003 <- diversity(matrix_spec, index="simpson")  ### Simpson Diversity - It is less sensitive to rare species than the Shannon-Wiener Index
-div_invsimpson_003 <- diversity(matrix_spec, index="inv")   ### inverse Simpson Diversity
 spec_nr_003 <- specnumber(matrix_spec,MARGIN=1)             ### Species number (observed)
 
-alpha_div_relab <- as.data.frame(cbind(spec_nr_003,div_shannon_003, div_invsimpson_003))
+alpha_div_relab <- as.data.frame(cbind(spec_nr_003,div_shannon_003))
 alpha_div_relab$J_ID <- row.names(alpha_div_relab)
 
 # Save alpha diversity
@@ -435,35 +400,9 @@ beta_div_relab_jaccard = phyloseq::distance(ps_relab, method='jaccard', binary =
 beta_div_relab_jaccard %>% as.vector %>% summary
 
 
-#Aitchison:
-otu_aict <- t(otu_table(ps_count))
-otu_aict[1:5, 1:5]
-
-#Impute zeros
-otu_comp <-  cmultRepl((otu_aict), method="CZM", output="p-counts")
-otu_comp[1:5, 1:5]
-
-```
-
-```{r echo=T, warning=FALSE, results='hide'}
-
-#Clr transformation
-otu_clr <- rgr::clr(otu_comp)
-```
-
-```{r}
-#Transform back into phyloseq object:
-ps_clr <- phyloseq(otu_table(otu_clr, taxa_are_rows = F), tax_table(ps_count), sample_data(meta))
-
-saveRDS(ps_clr, paste0(path, "humann3_processed_output/Phyloseq/", "ps_clr.rds"))
-
-#Calculate Euclidean distance (=Aitchison's distance):
-beta_div_relab_ait = phyloseq::distance(ps_clr, method='euclidean')
-
 #Save files
 saveRDS(beta_div_relab_bray, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_bray.RDS"))
 saveRDS(beta_div_relab_jaccard, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_jaccard.RDS"))
-saveRDS(beta_div_relab_ait, paste0(path,"humann3_processed_output/processed_tables/", "Beta.diversity_relab_aitchison.RDS"))
 
 ```
 
@@ -574,53 +513,6 @@ ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score_binary1))+
 
 ```
 
-Aitchison's distance:
-```{r}
-Ait_NMDS_relab_SPE=metaMDS(beta_div_relab_ait,k=2,trymax=30)
-Ait_NMDS_relab_SPE$stress
-
-data.scores = as.data.frame(scores(Ait_NMDS_relab_SPE))
-data.scores$sex <- sample_data(ps_relab)$sex
-data.scores$time_point <- sample_data(ps_relab)$time_point
-data.scores$age_gr <- sample_data(ps_relab)$age_gr
-data.scores$f_cal <- sample_data(ps_relab)$f_cal_current
-data.scores$f_cal_binary <- sample_data(ps_relab)$fcal_binary
-data.scores$score <- sample_data(ps_relab)$score
-data.scores$score_binary <- sample_data(ps_relab)$score_binary
-
-ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(sex)))+
-  geom_point()+theme_classic()+
-  stat_ellipse()+labs(color="Sex")
-
-ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = as.factor(age_gr)))+
-  geom_point()+theme_classic()+
-  stat_ellipse()+labs(color="Age group")
-
-data.scores1 <- data.scores %>% filter(!is.na(f_cal))
-ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal))+
-  geom_point(size=1)+theme_classic()+
-  labs(color="Faecal calprotectin")
-
-data.scores1$f_cal_binary1 <- factor(ifelse(data.scores1$f_cal_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
-ggplot(data=data.scores1, aes(x=NMDS1, y=NMDS2, color = f_cal_binary1))+
-  geom_point(size=1)+theme_classic()+
-  labs(color="Paraclinical")+
-  stat_ellipse()+ggtitle("Aitchison's distance")
-
-data.scores2 <- data.scores %>% filter(!is.na(score))
-ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score))+
-  geom_point(size=1)+theme_classic()+
-  labs(color="Disease score")+
-  stat_ellipse()
-
-data.scores2$score_binary1 <- factor(ifelse(data.scores2$score_binary==0, "Remission", "Disease"), levels=c("Remission", "Disease"))
-ggplot(data=data.scores2, aes(x=NMDS1, y=NMDS2, color = score_binary1))+
-  geom_point(size=1)+theme_classic()+
-  labs(color="Clinical")+
-  stat_ellipse()+ggtitle("Aitchison's distance")
-
-```
-
 
 # Prefiltering of dataframe for single species analyses
 
@@ -675,51 +567,163 @@ sd(apply(otu_table(ps_count_sub_mean_var_zero), 1, function(x) var(x)/mean(x)))
 
 ```
 
-Plot distributions to get a feeling of the data:
+
+# Plots for manuscript: Figure 1 and supplementary figure 1.
 ```{r}
-ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered.rds"))
-ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered.rds"))
-ps_clr <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_clr.rds"))
 
-#Select one sample (J28339) and plot species in histogram
-count_plot <- subset_samples(ps_count, J_ID=="J28339")
-plot_count <- as.data.frame(as.matrix(otu_table(count_plot)))
+#Figure 1C, Fecal, stacked barplot:
 
-ggplot(plot_count)+
-  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Species count")+ylab("")+theme_classic()
+#Renormalize to 100%:
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered2.rds"))
 
+ps_relab2 <- transform_sample_counts(ps_relab, function(x) x / sum(x) ) #100% in decimals
 
-relab_plot <- subset_samples(ps_relab, J_ID=="J28339")
-plot_relab <- as.data.frame(as.matrix(otu_table(relab_plot)))
-ggplot(plot_relab)+
-  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Species relative abundance (%)")+ylab("")+theme_classic()+ylim(0,600)
-ggplot(plot_relab)+
-  geom_histogram(aes(x=asin(sqrt(J28339))), fill="darkblue", bins=50)+xlab("Arcsine square root")+ylab("")+theme_classic()+ylim(0,600)
+temp <- ps_relab2 %>% tax_glom(taxrank = "Class") %>% psmelt() %>% filter(Abundance > 0.02)
 
-clr_plot <- subset_samples(ps_clr, J_ID=="J28339")
-plot_clr <- as.data.frame(t(otu_table(clr_plot)))
-ggplot(plot_clr)+
-  geom_histogram(aes(x=J28339), fill="darkblue", bins=50)+xlab("Clr transformed")+ylab("")+theme_classic()
+temp$age_gr <- ifelse(temp$age_gr == 1, "Pediatric", "Adult")
+temp$study_gr <- ifelse(temp$study_gr == 1, "Newly diagnosed", "Older diagnosis")
+fig_1c <- ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr+study_gr, scales="free_x")+
+  theme(text = element_text(family = "sans", size = 8))
+
+ggsave(fig_1c, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_1C.tiff", width = 130, height = 110, units = "mm", dpi=300)
 
 
-#Select one species (Akkermansia_muc) and plot the a
-count_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_count)
-plot_count <- as.data.frame(t(otu_table(count_plot)))
-ggplot(plot_count)+
-  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Species count")+ylab("")+theme_classic()
 
-relab_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_relab)
-plot_relab <- as.data.frame(t(otu_table(relab_plot)))
-ggplot(plot_relab)+
-  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Species relative abundance (%)")+ylab("")+theme_classic()
-ggplot(plot_relab)+
-  geom_histogram(aes(x=asin(sqrt(s__Eubacterium_sp_CAG_38))), fill="darkblue", bins=50)+xlab("Arcsine square root")+ylab("")+theme_classic()
+# Figure 1D:
+set.seed(0)
+beta_div_relab_bray = phyloseq::distance(ps_relab, method='bray')
+BRAY_NMDS_relab_SPE=metaMDS(beta_div_relab_bray, k=2,trymax=30)
+BRAY_NMDS_relab_SPE$stress
 
-clr_plot <- prune_taxa("s__Eubacterium_sp_CAG_38", ps_clr)
-plot_clr <- as.data.frame(as.matrix(otu_table(clr_plot)))
-ggplot(plot_clr)+
-  geom_histogram(aes(x=s__Eubacterium_sp_CAG_38), fill="darkblue", bins=50)+xlab("Clr transformed")+ylab("")+theme_classic()
+data.scores = as.data.frame(scores(BRAY_NMDS_relab_SPE))
+data.scores$study_gr <- sample_data(ps_relab)$study_gr
+data.scores$age_gr <- sample_data(ps_relab)$age_gr
+data.scores$time_point <- sample_data(ps_relab)$time_point
 
+data.scores$Group <- ifelse(data.scores$age_gr == 1 & data.scores$study_gr == 1, "Pediatric: Newly diagnosed", ifelse(data.scores$age_gr == 1 & data.scores$study_gr == 2,"Pediatric: Older diagnosis", ifelse(data.scores$study_gr == 1, "Adult: Newly diagnosed", "Adult: Older diagnosis")))
+
+fig_1d <- ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = Group))+
+  geom_point(size=1)+theme_classic()+
+  stat_ellipse()+
+  theme(text = element_text(family = "sans", size = 8))
+
+ggsave(fig_1d, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_1D.tiff", width = 110, height = 60, units = "mm", dpi=300)
+
+
+# Figure 1A: Biopsies, Stacked barplots
+main.dir = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/UC - biopsier/"
+setwd(paste0( file.path( main.dir, "data/16S/data_processed")))
+ps_relab = readRDS("DATA.ps.raw_SampleFilter.relab_meta.modified.rds")
+ 
+temp <- ps_relab %>% tax_glom(taxrank = "Class") %>% psmelt() %>% filter(Abundance > 0.02)
+
+temp$study_gr <- ifelse(temp$study_gr == 1, "Newly diagnosed", "Older diagnosis")
+temp$GI.location <- ifelse(temp$GI.location == "c", "Caecum", ifelse(temp$GI.location == "r", "Rectum", ifelse(temp$GI.location == "s", "Sigmoid colon", "Tansverse colon")))
+
+fig_supp <- ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~GI.location, scales="free_x")+
+  theme(text = element_text(family = "sans", size = 8))
+
+fig_1a <- ggplot(temp)+
+  geom_bar(aes(x=Sample, y= Abundance, fill = Class), stat = "identity", position = "stack")+
+  xlab("Participants")+theme_classic()+ theme(axis.text.x=element_blank())+facet_wrap(~age_gr+study_gr, scales="free_x")+
+  theme(text = element_text(family = "sans", size = 8))
+
+ggsave(fig_1a, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_1A.tiff", width = 130, height = 110, units = "mm", dpi=300)
+
+ggsave(fig_supp, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_Supplement.tiff", width = 130, height = 110, units = "mm", dpi=300)
+
+
+#Figure 1B:
+set.seed(0)
+beta_div_relab_bray = phyloseq::distance(ps_relab, method='bray')
+BRAY_NMDS_relab_SPE=metaMDS(beta_div_relab_bray, k=2,trymax=30)
+BRAY_NMDS_relab_SPE$stress
+
+data.scores = as.data.frame(scores(BRAY_NMDS_relab_SPE))
+data.scores$study_gr <- sample_data(ps_relab)$study_gr
+data.scores$age_gr <- sample_data(ps_relab)$age_gr
+data.scores$time_point <- sample_data(ps_relab)$time_point
+data.scores$GI.location <- sample_data(ps_relab)$GI.location
+
+data.scores$Group <- ifelse(data.scores$age_gr == "Paediatric" & data.scores$study_gr == 1, "Pediatric: Newly diagnosed", ifelse(data.scores$age_gr == "Paediatric" & data.scores$study_gr == 2,"Pediatric: Older diagnosis", ifelse(data.scores$study_gr == 1, "Adult: Newly diagnosed", "Adult: Older diagnosis")))
+
+fig_1b <- ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = Group))+
+  geom_point(size=1)+theme_classic()+
+  stat_ellipse()+
+  theme(text = element_text(family = "sans", size = 8))
+
+ggsave(fig_1b, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_1B.tiff", width = 110, height = 60, units = "mm", dpi=300)
+
+
+
+#Gather figure 1:
+p_left <- ggarrange(fig_1a, fig_1c, nrow=2, labels = c("A)", "C)"), font.label = list(size=10, family="sans"), heights = c(1, 1))
+
+p_right <- ggarrange(fig_1b, fig_1d, nrow=2, labels=c("B)", "D)"), common.legend = T, legend = "right", font.label = list(size=10, family="sans"), heights =  c(1, 1))
+
+p_total <- ggarrange(p_left, p_right, ncol=2, widths =  c(1,0.8))
+
+ggsave(p_total, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_1.tiff", width = 174, height = 200, units = "mm", dpi=300)
+
+
+
+#Figure supp 1B
+set.seed(0)
+beta_div_relab_bray = phyloseq::distance(ps_relab, method='bray')
+BRAY_NMDS_relab_SPE=metaMDS(beta_div_relab_bray, k=2,trymax=30)
+BRAY_NMDS_relab_SPE$stress
+
+data.scores = as.data.frame(scores(BRAY_NMDS_relab_SPE))
+data.scores$GI.location <- sample_data(ps_relab)$GI.location
+data.scores$GI.location <- ifelse(data.scores$GI.location == "c", "Caecum", ifelse(data.scores$GI.location == "r", "Rectum", ifelse(data.scores$GI.location == "s", "Sigmoid colon", "Tansverse colon")))
+
+fig_sup1b <- ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = GI.location))+
+  geom_point(size=1)+theme_classic()+
+  stat_ellipse()+guides(color=guide_legend(title="GI location"))+
+  theme(text = element_text(family = "sans", size = 8))
+
+#Figure supp 1C
+set.seed(0)
+jac_div_relab_bray = phyloseq::distance(ps_relab, method='jaccard', binary=T)
+JAC_NMDS_relab_SPE=metaMDS(jac_div_relab_bray, k=2,trymax=30)
+JAC_NMDS_relab_SPE$stress
+
+data.scores = as.data.frame(scores(JAC_NMDS_relab_SPE))
+data.scores$GI.location <- sample_data(ps_relab)$GI.location
+data.scores$GI.location <- ifelse(data.scores$GI.location == "c", "Caecum", ifelse(data.scores$GI.location == "r", "Rectum", ifelse(data.scores$GI.location == "s", "Sigmoid colon", "Tansverse colon")))
+
+fig_sup1c <- ggplot(data=data.scores, aes(x=NMDS1, y=NMDS2, color = GI.location))+
+  geom_point(size=1)+theme_classic()+
+  stat_ellipse()+guides(color=guide_legend(title="GI location"))+
+  theme(text = element_text(family = "sans", size = 8))
+
+#Figure supp 1A
+matrix_spec <- t(otu_table(ps_relab))
+div_shannon_003 <- diversity(t(matrix_spec), index="shannon")  ### Shannon entropy
+spec_nr_003 <- specnumber(matrix_spec,MARGIN=2)             ### Species number (observed)
+meta <- as.data.frame(as.matrix(sample_data(ps_relab)))
+meta$J_ID <- row.names(meta)
+
+alpha_div_relab <- as.data.frame(cbind(spec_nr_003,div_shannon_003))
+alpha_div_relab$J_ID <- row.names(alpha_div_relab)
+alpha_div <- merge(alpha_div_relab, meta, by.x="J_ID", by.y="J_ID")
+alpha_div$GI.location <- ordered(alpha_div$GI.location, levels = c('r','s',  't', 'c'), labels = c('r','s',  't', 'c'))
+head(alpha_div_relab)
+alpha_div$GI.location <- ifelse(alpha_div$GI.location == "c", "Caecum", ifelse(alpha_div$GI.location == "r", "Rectum", ifelse(alpha_div$GI.location == "s", "Sigmoid colon", "Tansverse colon")))
+
+fig_sup1a <- ggplot(data=alpha_div)+
+  geom_boxplot(aes(x=GI.location, y=div_shannon_003))+xlab("")+ylab("Shannon diversity")+theme_classic()
+
+
+#Gather figure supp 1:
+p_bottom <- ggarrange(fig_sup1b, fig_sup1c, common.legend =T, legend = "bottom", labels=c("B)","C)"), font.label = list(size=10, family="sans"))
+
+p_total <- ggarrange(fig_sup1a, p_bottom, nrow=2, heights = c(1,1))
+
+ggsave(p_total, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_Sup1.tiff", width = 174, height = 145, units = "mm", dpi=300)
 
 ```
-

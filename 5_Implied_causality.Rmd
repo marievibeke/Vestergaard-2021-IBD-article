@@ -1,0 +1,270 @@
+---
+title: "Implied causality"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+
+# Load in packages and data
+
+Load in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(caret)
+library(phyloseq)
+library(NBZIMM)
+library(vegan)
+library(metaMint)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(zCompositions)
+library(broom)
+library(MuMIn)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+path = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/data/"
+```
+
+Load in data:
+```{r}
+#Load in metaphlan dataframe
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_50mean_50var_zero.rds"))
+
+#Load in new meta data - with shifted disease score columns
+meta <-  read_delim(file = paste0(path, "metadata/Tilpasset_metadata_timelag.txt"), col_names = T, delim= "\t")
+meta <- as_tibble(meta)
+
+#Make binary disease score
+meta$binary_fcal <- as.factor(ifelse(meta$f_cal_current<250, 0, 1))
+meta$binary_fcal_future <- as.factor(ifelse(meta$f_cal_future<250, 0, 1))
+
+#Modify data: factorial
+meta$sex <- as.factor(meta$sex)
+meta$age_gr <- as.factor(meta$age_gr)
+meta$person_ID <- as.factor(meta$person_ID)
+meta$study_gr <- as.factor(meta$study_gr)
+```
+
+
+# Which species are important for the future remission/disease?
+
+Analysis of single species! Test the remission/disease using logistic mixed models. 
+```{r message=FALSE, warning=FALSE}
+#Add new metadata to phyloseq
+meta_sam <- meta
+meta_sam <- sample_data(meta_sam)
+sample_names(meta_sam) <- meta$J_ID
+otu <- otu_table(ps_relab)
+tax <- tax_table(ps_relab)
+
+ps <- phyloseq(otu, tax, meta_sam)
+
+#Make dataframe to test selected species
+ps1 <- subset_samples(ps, !is.na(binary_fcal_future))
+specie_df1 <- as.data.frame(as.matrix(t(otu_table(ps1))))
+meta_df1 <- as.data.frame(sample_data(ps1))
+
+meta_new <- meta_df1
+meta_new <- as.data.frame(as.matrix(meta_new))
+meta_new$binary_fcal <- as.factor(meta_new$binary_fcal)
+meta_new$binary_fcal_future <- as.factor(meta_new$binary_fcal_future)
+meta_new$age_gr <- as.factor(meta_new$age_gr)
+
+
+###Divide species into 2 groups: absent and present
+df_test2 <- specie_df1
+for (i in 1:dim(df_test2)[2]){
+  m1 <- mean(df_test2[,i])
+  for (j in 1:dim(df_test2)[1]){
+    df_test2[j,i] <- ifelse(df_test2[j,i]==0, "absent", "present")  
+  }
+  df_test2[,i] <- factor(df_test2[,i], levels=c("absent", "present"))
+}
+
+spec <- colnames(df_test2)
+df_test2$J_ID <- rownames(df_test2)
+df2 <- merge(meta_new, df_test2, by.x="J_ID", by.y="J_ID")
+
+#First: check for interaction with age
+df2_newly <- df2 %>% filter(study_gr == 1)
+df2_old <- df2 %>% filter(study_gr == 2)
+
+res_age_newly <- data.frame()
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2_newly, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age_newly <- rbind(res_age_newly, res_1)
+}
+
+res_inter_newly <- res_age_newly[grep("age_gr2", row.names(res_age_newly)),]
+res_inter_newly$padj <- p.adjust(res_inter_newly$`Pr(>|z|)`, method="BH")
+res_test_newly <- res_inter_newly %>% filter(padj<0.05)
+res_test_newly
+res_test1_newly <- res_inter_newly %>% filter(`Pr(>|z|)`<0.05)
+res_test1_newly
+
+#Fit again to ensure convergence!
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_vulgatus*age_gr+(1|person_ID), data=df2_newly, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+s__Anaerostipes_hadrus*age_gr+(1|person_ID), data=df2_newly, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model2)
+#They will not converge!
+
+#Not significant at all with another optimizer:
+summary(model1)
+summary(model2)
+
+#Repeat with older diagnosis:
+res_age_old <- data.frame()
+for (i in spec){
+  form <- paste0("binary_fcal_future~binary_fcal+", i, "*age_gr+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2_old, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_age_old <- rbind(res_age_old, res_1)
+}
+
+res_inter_old <- res_age_old[grep("age_gr2", row.names(res_age_old)),]
+res_inter_old$padj <- p.adjust(res_inter_old$`Pr(>|z|)`, method="BH")
+res_test_old <- res_inter_old %>% filter(padj<0.05)
+res_test_old
+res_test1_old <- res_inter_old %>% filter(`Pr(>|z|)`<0.05)
+res_test1_old
+
+
+#Fit again to ensure convergence!
+model1 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_dorei*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_ovatus*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit)
+summary(model2)
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+s__Coprococcus_comes*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit)
+summary(model3)
+
+model4 <- glmer(formula=binary_fcal_future~binary_fcal+s__Eubacterium_siraeum*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit)
+summary(model4)
+
+model5 <- glmer(formula=binary_fcal_future~binary_fcal+s__Dialister_invisus*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit, control=glmerControl(optimizer="bobyqa"))
+summary(model5)
+
+model6 <- glmer(formula=binary_fcal_future~binary_fcal+s__Parasutterella_excrementihominis*age_gr+(1|person_ID), data=df2_old, family = "binomial", na.action=na.omit)
+summary(model6)
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+#Test without the interaction term!
+spec_1 <- colnames(df_test2)[1:75]
+
+res_newly <- data.frame()
+for (i in spec_1){
+  form <- paste0("binary_fcal_future~binary_fcal+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2_newly, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_newly <- rbind(res_newly, res_1)
+}
+
+res_old <- data.frame()
+for (i in spec_1){
+  form <- paste0("binary_fcal_future~binary_fcal+", i, "+(1|person_ID)")
+  model <- glmer(formula=as.formula(form), data=df2_old, family = "binomial", na.action=na.omit)
+  df <- as.data.frame(summary(model)$coefficients)
+  res_1 <- df[grep(i, row.names(df)),]
+  res_1$bug <- i
+  res_old <- rbind(res_old, res_1)
+}
+```
+
+```{r}
+res_newly$padj <- p.adjust(res_newly$`Pr(>|z|)`, method = "BH")
+res_sig1_newly <- res_newly %>% filter(`Pr(>|z|)`<0.05)
+res_sig_newly <- res_newly %>% filter(padj<0.05)
+
+spec <- unique(res_sig_newly$bug)
+spec1 <- unique(res_sig1_newly$bug)
+
+#go with the p<0.05 and refit to ensure convergence!:
+j <- 1
+for (i in spec1){
+  form <- paste0("binary_fcal_future~binary_fcal+", i, "+(1|person_ID)")
+  model <- glmer(formula=form, family="binomial", data=df2_newly, na.action=na.omit)
+  assign(paste0("model", j), model)
+  j <- j+1
+  
+}
+summary(model1)
+
+model2 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bifidobacterium_bifidum+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="nlminbwrap"))
+summary(model2) #Not singificant anymore
+
+model3 <- glmer(formula=binary_fcal_future~binary_fcal+s__Slackia_isoflavoniconvertens+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="nlminbwrap"))
+summary(model3)
+
+model4 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_caccae+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model4) #Not singificant anymore
+
+model5 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_cellulosilyticus+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="nlminbwrap"))
+summary(model5)
+
+model6 <- glmer(formula=binary_fcal_future~binary_fcal+s__Bacteroides_vulgatus+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model6) #Not singificant anymore
+
+model7 <- glmer(formula=binary_fcal_future~binary_fcal+s__Alistipes_finegoldii+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model7) #Not singificant anymore
+
+model8 <- glmer(formula=binary_fcal_future~binary_fcal+s__Alistipes_shahii+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model8) #Not singificant anymore
+
+model9 <- glmer(formula=binary_fcal_future~binary_fcal+s__Streptococcus_parasanguinis+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="nlminbwrap"))
+summary(model9) #Not singificant anymore
+
+model10 <- glmer(formula=binary_fcal_future~binary_fcal+s__Streptococcus_salivarius+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="nlminbwrap"))
+summary(model10) #Not singificant anymore
+
+model11 <- glmer(formula=binary_fcal_future~binary_fcal+s__Intestinimonas_butyriciproducens+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model11)
+
+model12 <- glmer(formula=binary_fcal_future~binary_fcal+s__Eubacterium_ventriosum+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model12) #Not singificant anymore
+
+model13 <- glmer(formula=binary_fcal_future~binary_fcal+s__Anaerostipes_hadrus+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model13)#Not singificant anymore
+
+model14 <- glmer(formula=binary_fcal_future~binary_fcal+s__Blautia_wexlerae+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model14)#Not singificant anymore
+
+model15 <- glmer(formula=binary_fcal_future~binary_fcal+s__Eubacterium_rectale+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model15)#Not singificant anymore
+
+model16 <- glmer(formula=binary_fcal_future~binary_fcal+s__Roseburia_hominis+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model16)#Not singificant anymore
+
+model17 <- glmer(formula=binary_fcal_future~binary_fcal+s__Oscillibacter_sp_CAG_241+(1|person_ID), family="binomial", data=df2_newly, control=glmerControl(optimizer="bobyqa"))
+summary(model17)#Not singificant anymore
+
+summary(model18)
+
+##Repeat for previously diagnosed
+res_old$padj <- p.adjust(res_old$`Pr(>|z|)`, method = "BH")
+res_sig1_old <- res_old %>% filter(`Pr(>|z|)`<0.05)
+res_sig_old <- res_old %>% filter(padj<0.05)
+
+spec <- unique(res_sig_old$bug)
+spec1 <- unique(res_sig1_old$bug)
+
+res_sig1_old
+
+```

@@ -1,0 +1,449 @@
+---
+title: "Analyses of single species using NBZIMM"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+# Read in packages and data
+
+Read in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+library(caret)
+library(phyloseq)
+library(NBZIMM)
+library(vegan)
+library(metaMint)
+library(lme4)
+library(lmerTest)
+library(zCompositions)
+library(reshape2)
+path = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/data/"
+
+```
+
+Read in data:
+```{r}
+#Phyloseq objects:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_50mean_50var_zero.rds"))
+
+#Meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Merge meta data with phyloseq object to remove those samples with >85% reads removed as human 
+rownames(meta) <- meta$J_ID
+ps_count <- phyloseq(otu_table(ps_count), tax_table(ps_count), sample_data(meta))
+```
+
+# Test difference in relab between age groups for all species:
+```{r}
+#Test association with age group:
+
+newly <- subset_samples(ps_count, study_gr == 1)
+old <- subset_samples(ps_count, study_gr == 2)
+
+#Test within newly diagnosed:
+person_ID <- as.factor(sample_data(newly)$person_ID)
+age_gr <-  as.factor(sample_data(newly)$age_gr)
+time_point <- sample_data(newly)$time_point
+N <- sample_data(newly)$rdepth
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N)
+pheno <-  as.data.frame(as.matrix(t(otu_table(newly))))
+
+f_newly <- mms(y=pheno, fixed= ~age_gr+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr+offset(log(N)))
+
+#Test within previously diagnosed:
+person_ID <- as.factor(sample_data(old)$person_ID)
+age_gr <-  as.factor(sample_data(old)$age_gr)
+time_point <- sample_data(old)$time_point
+N <- sample_data(old)$rdepth
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N)
+pheno <-  as.data.frame(as.matrix(t(otu_table(old))))
+
+f_old <- mms(y=pheno, fixed= ~age_gr+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr+offset(log(N)))
+
+#Find taxa with significant (p-adj<0.05) age group.  
+age_newly = as.data.frame(get.fixed(f_newly, part="dist", vr.name="age_gr2"))
+age_newly$p_adj <- p.adjust(age_newly$pvalue ,method = "BH")
+age_newly_zi = as.data.frame(get.fixed(f_newly, part="zero", vr.name="age_gr2"))
+age_newly_zi$p_adj <- p.adjust(age_newly_zi$pvalue ,method = "BH")
+
+age_old = as.data.frame(get.fixed(f_old, part="dist", vr.name="age_gr2"))
+age_old$p_adj <- p.adjust(age_old$pvalue ,method = "BH")
+age_old_zi = as.data.frame(get.fixed(f_old, part="zero", vr.name="age_gr2"))
+age_old_zi$p_adj <- p.adjust(age_old_zi$pvalue ,method = "BH")
+
+write.table(age_newly, file = paste0(path, "Results/vol2/" , "Newly_test_age.txt"))
+write.table(age_newly_zi, file = paste0(path, "Results/vol2/" , "Newly_test_age_zi.txt"))
+write.table(age_old, file = paste0(path, "Results/vol2/" , "Old_test_age.txt"))
+write.table(age_old_zi, file = paste0(path, "Results/vol2/" , "Old_test_age_zi.txt"))
+
+age_newly <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_age.txt"), sep=" ")
+age_newly_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_age_zi.txt"), sep=" ")
+age_old <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_age.txt"), sep=" ")
+age_old_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_age_zi.txt"), sep=" ")
+
+age_newly_sig <- age_newly %>% filter(p_adj < 0.05)
+age_newly_zi_sig <- age_newly_zi %>% filter(p_adj < 0.05)
+
+age_old_sig <- age_old %>% filter(p_adj < 0.05)
+age_old_zi_sig <- age_old_zi %>% filter(p_adj < 0.05)
+
+#Overview of results:
+age_newly_sig$analysis <- "Newly diagnosed: NB"
+age_newly_zi_sig$analysis <- "Newly diagnosed: ZI"
+age_old_sig$analysis <- "Previously diagnosed: NB"
+age_old_zi_sig$analysis <- "Previously diagnosed: ZI"
+
+age_newly_sig$group <- "Newly diagnosed"
+age_newly_zi_sig$group <- "Newly diagnosed"
+age_old_sig$group <- "Previously diagnosed"
+age_old_zi_sig$group <- "Previously diagnosed"
+
+age_newly_sig$part <- "NB"
+age_newly_zi_sig$part <- "ZI"
+age_old_sig$part <- "NB"
+age_old_zi_sig$part <- "ZI"
+
+age_newly_zi_sig$Estimate <- age_newly_zi_sig$Estimate * -1
+age_old_zi_sig$Estimate <- age_old_zi_sig$Estimate * -1
+
+age_newly_sig$spec <- row.names(age_newly_sig)
+age_newly_zi_sig$spec <- row.names(age_newly_zi_sig)
+age_old_sig$spec <- row.names(age_old_sig)
+age_old_zi_sig$spec <- row.names(age_old_zi_sig)
+
+df_plot <- rbind(age_newly_sig, age_newly_zi_sig, age_old_sig, age_old_zi_sig)
+df_plot$spec <- gsub("s__", "", df_plot$spec)
+df_plot$spec <- gsub("_", " ", df_plot$spec)
+
+bl <- colorRampPalette(c("navy","royalblue","lightskyblue"))(200)   
+re <- colorRampPalette(c("mistyrose", "red2","darkred"))(200)
+min(df_plot$Estimate)
+max(df_plot$Estimate)
+
+df_plot$analysis <- ordered(df_plot$analysis, levels=c("Previously diagnosed: ZI", "Previously diagnosed: NB", "Newly diagnosed: ZI", "Newly diagnosed: NB")) 
+
+#Figure 2B:
+fig_2b <- ggplot(data=df_plot)+
+  geom_tile(aes(x=spec, y=analysis, fill = Estimate))+theme_classic()+xlab("")+ylab("")+scale_fill_gradientn(colours=c(bl, re), na.value = "black",limits = c(-3.2, 3.2))+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(text = element_text(family = "sans", size = 8))
+
+```
+
+# Test importance of f-cal. Evaluate interaction with age first.
+
+```{r}
+ps_sub <- subset_samples(ps_count, f_cal_current != "NA")
+newly <- subset_samples(ps_sub, study_gr == 1)
+old <- subset_samples(ps_sub, study_gr == 2)
+
+#Test within newly diagnosed:
+person_ID <- as.factor(sample_data(newly)$person_ID)
+age_gr <-  as.factor(sample_data(newly)$age_gr)
+time_point <- sample_data(newly)$time_point
+N <- sample_data(newly)$rdepth
+f_cal <- log(as.numeric(sample_data(newly)$f_cal_current)+1)
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(newly))))
+
+f_newly <- mms(y=pheno, fixed= ~age_gr*f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr*f_cal+offset(log(N)))
+
+#Test within previously diagnosed:
+person_ID <- as.factor(sample_data(old)$person_ID)
+age_gr <-  as.factor(sample_data(old)$age_gr)
+time_point <- sample_data(old)$time_point
+N <- sample_data(old)$rdepth
+f_cal <- log(as.numeric(sample_data(old)$f_cal_current)+1)
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(old))))
+
+f_old <- mms(y=pheno, fixed= ~age_gr*f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr*f_cal+offset(log(N)))
+
+#Find taxa with significant (p-adj<0.05) interaction.  
+inter_newly = as.data.frame(get.fixed(f_newly, part="dist", vr.name="age_gr2:f_cal"))
+inter_newly$p_adj <- p.adjust(inter_newly$pvalue ,method = "BH")
+fcal_newly = as.data.frame(get.fixed(f_newly, part="dist", vr.name="f_cal"))
+fcal_newly$p_adj <- p.adjust(fcal_newly$pvalue ,method = "BH")
+
+inter_newly_zi = as.data.frame(get.fixed(f_newly, part="zero", vr.name="age_gr2:f_cal"))
+inter_newly_zi$p_adj <- p.adjust(inter_newly_zi$pvalue ,method = "BH")
+fcal_newly_zi = as.data.frame(get.fixed(f_newly, part="zero", vr.name="f_cal"))
+fcal_newly_zi$p_adj <- p.adjust(fcal_newly_zi$pvalue ,method = "BH")
+
+inter_old = as.data.frame(get.fixed(f_old, part="dist", vr.name="age_gr2:f_cal"))
+inter_old$p_adj <- p.adjust(inter_old$pvalue ,method = "BH")
+fcal_old = as.data.frame(get.fixed(f_old, part="dist", vr.name="f_cal"))
+fcal_old$p_adj <- p.adjust(fcal_old$pvalue ,method = "BH")
+
+inter_old_zi = as.data.frame(get.fixed(f_old, part="zero", vr.name="age_gr2:f_cal"))
+inter_old_zi$p_adj <- p.adjust(inter_old_zi$pvalue ,method = "BH")
+fcal_old_zi = as.data.frame(get.fixed(f_old, part="zero", vr.name="f_cal"))
+fcal_old_zi$p_adj <- p.adjust(fcal_old_zi$pvalue ,method = "BH")
+
+write.table(inter_newly, file = paste0(path, "Results/vol2/" , "Newly_test_age_fcal.txt"))
+write.table(inter_newly_zi, file = paste0(path, "Results/vol2/" , "Newly_test_age_fcal_zi.txt"))
+write.table(fcal_newly, file = paste0(path, "Results/vol2/" , "Newly_test_fcal.txt"))
+write.table(fcal_newly_zi, file = paste0(path, "Results/vol2/" , "Newly_test_fcal_zi.txt"))
+write.table(inter_old, file = paste0(path, "Results/vol2/" , "Old_test_age_fcal.txt"))
+write.table(inter_old_zi, file = paste0(path, "Results/vol2/" , "Old_test_age_fcal_zi.txt"))
+write.table(fcal_old, file = paste0(path, "Results/vol2/" , "Old_test_fcal.txt"))
+write.table(fcal_old_zi, file = paste0(path, "Results/vol2/" , "Old_test_fcal_zi.txt"))
+
+inter_newly <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_age_fcal.txt"), sep=" ")
+inter_newly_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_age_fcal_zi.txt"), sep=" ")
+inter_old <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_age_fcal.txt"), sep=" ")
+inter_old_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_age_fcal_zi.txt"), sep=" ")
+
+inter_newly_sig <- inter_newly %>% filter(p_adj < 0.05)
+inter_newly_zi_sig <- inter_newly_zi %>% filter(p_adj < 0.05)
+
+inter_old_sig <- inter_old %>% filter(p_adj < 0.05)
+inter_old_zi_sig <- inter_old_zi %>% filter(p_adj < 0.05)
+
+sig_newly <- unique(c(row.names(inter_newly_sig), row.names(inter_newly_zi_sig)))
+sig_old <- unique(c(row.names(inter_old_sig), row.names(inter_old_zi_sig)))
+
+#Within age group, refit
+newly_children <- subset_samples(newly, age_gr == 1)
+newly_adults <- subset_samples(newly, age_gr == 2)
+old_children <- subset_samples(old, age_gr == 1)
+old_adults <- subset_samples(old, age_gr == 2)
+
+#Newly_children
+person_ID <- as.factor(sample_data(newly_children)$person_ID)
+time_point <- sample_data(newly_children)$time_point
+N <- sample_data(newly_children)$rdepth
+f_cal <- log(as.numeric(sample_data(newly_children)$f_cal_current)+1)
+clinical = cbind.data.frame(person_ID, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(newly_children))))
+f_newly_children <- mms(y=pheno[,sig_newly], fixed= ~f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~f_cal+offset(log(N)))
+
+fcal_newly_children = as.data.frame(get.fixed(f_newly_children, part="dist", vr.name="f_cal"))
+
+#Newly_adults
+person_ID <- as.factor(sample_data(newly_adults)$person_ID)
+time_point <- sample_data(newly_adults)$time_point
+N <- sample_data(newly_adults)$rdepth
+f_cal <- log(as.numeric(sample_data(newly_adults)$f_cal_current)+1)
+clinical = cbind.data.frame(person_ID, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(newly_adults))))
+f_newly_adults <- mms(y=pheno[,sig_newly], fixed= ~f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~f_cal+offset(log(N)))
+
+fcal_newly_adults = as.data.frame(get.fixed(f_newly_adults, part="dist", vr.name="f_cal"))
+
+#Old_children
+person_ID <- as.factor(sample_data(old_children)$person_ID)
+time_point <- sample_data(old_children)$time_point
+N <- sample_data(old_children)$rdepth
+f_cal <- log(as.numeric(sample_data(old_children)$f_cal_current)+1)
+clinical = cbind.data.frame(person_ID, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(old_children))))
+f_old_children <- mms(y=pheno[,sig_old], fixed= ~f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~f_cal+offset(log(N)))
+
+fcal_old_children = as.data.frame(get.fixed(f_old_children, part="dist", vr.name="f_cal"))
+
+#old_adults
+person_ID <- as.factor(sample_data(old_adults)$person_ID)
+time_point <- sample_data(old_adults)$time_point
+N <- sample_data(old_adults)$rdepth
+f_cal <- log(as.numeric(sample_data(old_adults)$f_cal_current)+1)
+clinical = cbind.data.frame(person_ID, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(old_adults))))
+f_old_adults <- mms(y=pheno[,sig_old], fixed= ~f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~f_cal+offset(log(N)))
+
+fcal_old_adults = as.data.frame(get.fixed(f_old_adults, part="dist", vr.name="f_cal"))
+
+##Repeat analysis without interaction with age for the rest (non-significant)
+#Test within newly diagnosed:
+person_ID <- as.factor(sample_data(newly)$person_ID)
+age_gr <-  as.factor(sample_data(newly)$age_gr)
+time_point <- sample_data(newly)$time_point
+N <- sample_data(newly)$rdepth
+f_cal <- log(as.numeric(sample_data(newly)$f_cal_current)+1)
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(newly))))
+
+rest <- setdiff(colnames(pheno), sig_newly)
+f_newly <- mms(y=pheno[, rest], fixed= ~age_gr+f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr+f_cal+offset(log(N)))
+
+#Test within previously diagnosed:
+person_ID <- as.factor(sample_data(old)$person_ID)
+age_gr <-  as.factor(sample_data(old)$age_gr)
+time_point <- sample_data(old)$time_point
+N <- sample_data(old)$rdepth
+f_cal <- log(as.numeric(sample_data(old)$f_cal_current)+1)
+
+clinical = cbind.data.frame(person_ID, age_gr, time_point, N, f_cal)
+pheno <-  as.data.frame(as.matrix(t(otu_table(old))))
+
+rest <- setdiff(colnames(pheno), sig_old)
+f_old <- mms(y=pheno[, rest], fixed= ~age_gr+f_cal+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~age_gr+f_cal+offset(log(N)))
+
+#Find taxa with significant (p-adj<0.05) f-cal.  
+fcal_newly = as.data.frame(get.fixed(f_newly, part="dist", vr.name="f_cal"))
+fcal_newly$p_adj <- p.adjust(fcal_newly$pvalue ,method = "BH")
+
+fcal_newly_zi = as.data.frame(get.fixed(f_newly, part="zero", vr.name="f_cal"))
+fcal_newly_zi$p_adj <- p.adjust(fcal_newly_zi$pvalue ,method = "BH")
+
+fcal_old = as.data.frame(get.fixed(f_old, part="dist", vr.name="f_cal"))
+fcal_old$p_adj <- p.adjust(fcal_old$pvalue ,method = "BH")
+
+fcal_old_zi = as.data.frame(get.fixed(f_old, part="zero", vr.name="f_cal"))
+fcal_old_zi$p_adj <- p.adjust(fcal_old_zi$pvalue ,method = "BH")
+
+write.table(fcal_newly, file = paste0(path, "Results/vol2/" , "Newly_test_fcal_nointeraction.txt"))
+write.table(fcal_newly_zi, file = paste0(path, "Results/vol2/" , "Newly_test_fcal_zi_nointeraction.txt"))
+write.table(fcal_old, file = paste0(path, "Results/vol2/" , "Old_test_fcal_nointeraction.txt"))
+write.table(fcal_old_zi, file = paste0(path, "Results/vol2/" , "Old_test_fcal_zi_nointeraction.txt"))
+
+fcal_newly <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_fcal_nointeraction.txt"), sep=" ")
+fcal_newly_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Newly_test_fcal_zi_nointeraction.txt"), sep=" ")
+fcal_old <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_fcal_nointeraction.txt"), sep=" ")
+fcal_old_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Old_test_fcal_zi_nointeraction.txt"), sep=" ")
+
+fcal_newly_sig <- fcal_newly %>% filter(p_adj < 0.05)
+fcal_newly_zi_sig <- fcal_newly_zi %>% filter(p_adj < 0.05)
+
+fcal_old_sig <- fcal_old %>% filter(p_adj < 0.05)
+fcal_old_zi_sig <- fcal_old_zi %>% filter(p_adj < 0.05)
+
+#Overview of results:
+fcal_newly_sig$analysis <- "Newly diagnosed: NB"
+fcal_newly_zi_sig$analysis <- "Newly diagnosed: ZI"
+fcal_old_sig$analysis <- "Previously diagnosed: NB"
+fcal_old_zi_sig$analysis <- "Previously diagnosed: ZI"
+
+fcal_newly_sig$group <- "Newly diagnosed"
+fcal_newly_zi_sig$group <- "Newly diagnosed"
+fcal_old_sig$group <- "Previously diagnosed"
+fcal_old_zi_sig$group <- "Previously diagnosed"
+
+fcal_newly_sig$part <- "NB"
+fcal_newly_zi_sig$part <- "ZI"
+fcal_old_sig$part <- "NB"
+fcal_old_zi_sig$part <- "ZI"
+
+fcal_newly_zi_sig$Estimate <- fcal_newly_zi_sig$Estimate * -1
+fcal_old_zi_sig$Estimate <- fcal_old_zi_sig$Estimate * -1
+
+fcal_newly_sig$spec <- row.names(fcal_newly_sig)
+fcal_newly_zi_sig$spec <- row.names(fcal_newly_zi_sig)
+fcal_old_sig$spec <- row.names(fcal_old_sig)
+fcal_old_zi_sig$spec <- row.names(fcal_old_zi_sig)
+
+df_plot <- rbind(fcal_newly_sig, fcal_newly_zi_sig, fcal_old_sig, fcal_old_zi_sig)
+df_plot$spec <- gsub("s__", "", df_plot$spec)
+df_plot$spec <- gsub("_", " ", df_plot$spec)
+
+bl <- colorRampPalette(c("navy","royalblue","lightskyblue"))(200)   
+re <- colorRampPalette(c("mistyrose", "red2","darkred"))(200)
+min(df_plot$Estimate)
+max(df_plot$Estimate)
+
+df_plot$analysis <- ordered(df_plot$analysis, levels=c("Previously diagnosed: ZI", "Previously diagnosed: NB", "Newly diagnosed: ZI", "Newly diagnosed: NB")) 
+
+#Plot figure 4B:
+fig_4b <- ggplot(data=df_plot)+
+  geom_tile(aes(x=spec, y=analysis, fill = Estimate))+theme_classic()+xlab("")+ylab("")+scale_fill_gradientn(colours=c(bl, re), na.value = "black",limits = c(-0.5, 0.5))+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(text = element_text(family = "sans", size = 8))
+
+```
+
+
+# Test difference in relab between study groups for all species:
+```{r}
+children <- subset_samples(ps_count, age_gr == 1)
+adults <- subset_samples(ps_count, age_gr == 2)
+
+#Test within children:
+person_ID <- as.factor(sample_data(children)$person_ID)
+study_gr <-  as.factor(sample_data(children)$study_gr)
+time_point <- sample_data(children)$time_point
+N <- sample_data(children)$rdepth
+
+clinical = cbind.data.frame(person_ID, study_gr, time_point, N)
+pheno <-  as.data.frame(as.matrix(t(otu_table(children))))
+
+f_children <- mms(y=pheno, fixed= ~study_gr+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~study_gr+offset(log(N)))
+
+#Test within adults:
+person_ID <- as.factor(sample_data(adults)$person_ID)
+study_gr <-  as.factor(sample_data(adults)$study_gr)
+time_point <- sample_data(adults)$time_point
+N <- sample_data(adults)$rdepth
+
+clinical = cbind.data.frame(person_ID, study_gr, time_point, N)
+pheno <-  as.data.frame(as.matrix(t(otu_table(adults))))
+
+f_adults <- mms(y=pheno, fixed= ~study_gr+offset(log(N)), data=clinical, random = ~1|person_ID, method="zinb", correlation=corAR1(form=~time_point|person_ID), zi_fixed=~study_gr+offset(log(N)))
+
+#Find taxa with significant (p-adj<0.05) study group.  
+study_children = as.data.frame(get.fixed(f_children, part="dist", vr.name="study_gr2"))
+study_children$p_adj <- p.adjust(study_children$pvalue ,method = "BH")
+study_children_zi = as.data.frame(get.fixed(f_children, part="zero", vr.name="study_gr2"))
+study_children_zi$p_adj <- p.adjust(study_children_zi$pvalue ,method = "BH")
+
+study_adults = as.data.frame(get.fixed(f_adults, part="dist", vr.name="study_gr2"))
+study_adults$p_adj <- p.adjust(study_adults$pvalue ,method = "BH")
+study_adults_zi = as.data.frame(get.fixed(f_adults, part="zero", vr.name="study_gr2"))
+study_adults_zi$p_adj <- p.adjust(study_adults_zi$pvalue ,method = "BH")
+
+write.table(study_children, file = paste0(path, "Results/vol2/" , "Children_test_study.txt"))
+write.table(study_children_zi, file = paste0(path, "Results/vol2/" , "Children_test_study_zi.txt"))
+write.table(study_adults, file = paste0(path, "Results/vol2/" , "Adults_test_study.txt"))
+write.table(study_adults_zi, file = paste0(path, "Results/vol2/" , "Adults_test_study_zi.txt"))
+
+study_children <- read.csv(file = paste0(path, "Results/vol2/" , "Children_test_study.txt"), sep=" ")
+study_children_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Children_test_study_zi.txt"), sep=" ")
+study_adults <- read.csv(file = paste0(path, "Results/vol2/" , "Adults_test_study.txt"), sep=" ")
+study_adults_zi <- read.csv(file = paste0(path, "Results/vol2/" , "Adults_test_study_zi.txt"), sep=" ")
+
+study_children_sig <- study_children %>% filter(p_adj < 0.05)
+study_children_zi_sig <- study_children_zi %>% filter(p_adj < 0.05)
+
+study_adults_sig <- study_adults %>% filter(p_adj < 0.05)
+study_adults_zi_sig <- study_adults_zi %>% filter(p_adj < 0.05)
+
+#Overview of results:
+study_children_sig$analysis <- "Children: NB"
+study_children_zi_sig$analysis <- "Children: ZI"
+study_adults_sig$analysis <- "Adults: NB"
+study_adults_zi_sig$analysis <- "Adults: ZI"
+
+study_children_zi_sig$Estimate <- study_children_zi_sig$Estimate * -1
+study_adults_zi_sig$Estimate <- study_adults_zi_sig$Estimate * -1
+
+study_children_sig$spec <- row.names(study_children_sig)
+study_children_zi_sig$spec <- row.names(study_children_zi_sig)
+study_adults_sig$spec <- row.names(study_adults_sig)
+study_adults_zi_sig$spec <- row.names(study_adults_zi_sig)
+
+df_plot <- rbind(study_children_sig, study_children_zi_sig, study_adults_sig, study_adults_zi_sig)
+df_plot$spec <- gsub("s__", "", df_plot$spec)
+df_plot$spec <- gsub("_", " ", df_plot$spec)
+
+bl <- colorRampPalette(c("navy","royalblue","lightskyblue"))(200)   
+re <- colorRampPalette(c("mistyrose", "red2","darkred"))(200)
+min(df_plot$Estimate)
+max(df_plot$Estimate)
+
+df_plot$group <- ordered(df_plot$group, levels=c("Previously diagnosed", "Newly diagnosed")) 
+
+#Figure 3B:
+fig_3b <- ggplot(data=df_plot)+
+  geom_tile(aes(x=spec, y=analysis, fill = Estimate))+theme_classic()+xlab("")+ylab("")+scale_fill_gradientn(colours=c(bl, re), na.value = "black",
+         limits = c(-3.9, 3.9))+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(text = element_text(family = "sans", size = 8))
+```

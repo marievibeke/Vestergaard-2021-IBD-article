@@ -1,0 +1,552 @@
+---
+title: "Investigation of diversity and stability"
+output:
+  github_document:
+    toc: true
+editor_options:
+  chunk_output_type: console
+---
+# Read in packages and data
+
+Read in packages and path to folder:
+```{r echo=T, message=F, error=F, warning=F}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(ggpubr)
+library(vegan)
+library(caret)
+library(phyloseq)
+library(lme4)
+library(lmerTest)
+library(nlme)
+library(RCurl)
+library(MuMIn)
+path = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/data/"
+```
+
+Read in data:
+```{r echo=T, message=F, error=F, warning=F}
+#Meta data:
+meta <- read.delim(paste0(path, "metadata/", "preped_metadata_filtered.txt"))
+
+#Alpha diversity:
+alpha_div <- read_delim(file=paste0(path, "humann3_processed_output/processed_tables/", "AlphaDiv_relab.txt"), delim="\t")
+alpha_div <- merge(alpha_div, meta, by.x="J_ID", by.y="J_ID")
+alpha_div$age_gr <- as.factor(alpha_div$age_gr)
+alpha_div$study_gr <- as.factor(alpha_div$study_gr)
+
+#Phyloseq objects:
+ps_count <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_count_filtered2.rds"))
+ps_relab <- readRDS(paste0(path, "humann3_processed_output/Phyloseq/","ps_relab_filtered2.rds"))
+sample_data(ps_count)$age_gr <- as.factor(sample_data(ps_count)$age_gr)
+sample_data(ps_relab)$age_gr <- as.factor(sample_data(ps_relab)$age_gr)
+sample_data(ps_count)$study_gr <- as.factor(sample_data(ps_count)$study_gr)
+sample_data(ps_relab)$study_gr <- as.factor(sample_data(ps_relab)$study_gr)
+
+```
+
+Investigate if alpha diversity and unmapped reads are normally distributed and transform if not!:
+```{r}
+#Chao1
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=spec_nr_003), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Observed diveristy")+ylab("Count")
+
+#Shannon
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=div_shannon_003), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Shannon diversity")+ylab("Count")
+
+ggplot(data=alpha_div)+
+  geom_histogram(aes(x=div_shannon_003^2), color="black", fill = "lightblue", bins=40)+theme_classic()+xlab("Squared Shannon diversity")+ylab("Count")
+
+alpha_div$div_shannon_0032 <- (alpha_div$div_shannon_003)^2
+```
+
+
+# Tests of alpha diversity
+
+Visual inspection of alpha diversity ~ disease score:
+
+```{r}
+#Clinical disease score:
+alpha1 <- alpha_div %>% filter(!is.na(score))
+alpha1$score <- factor(alpha1$score, levels=c("remission", "mild", "moderate", "severe"))
+
+ggplot(alpha1)+
+  geom_boxplot(aes(x=score, y=spec_nr_003, color=score))+theme_classic()+xlab("Disease score")+ylab("Observed diversity")+theme(legend.position = "none")
+
+ggplot(alpha1)+
+  geom_boxplot(aes(x=score, y=div_shannon_003, color=score))+theme_classic()+xlab("Disease score")+ylab("Shannon diversity")+theme(legend.position = "none")
+
+#Paraclinical disease score
+alpha2 <- alpha_div %>% filter(!is.na(f_cal_current))
+
+ggplot(alpha2)+
+  geom_point(aes(x=f_cal_current, y=spec_nr_003), size=1)+theme_classic()+xlab("Faecal calprotectin")+ylab("Observed diversity")+
+  geom_vline(xintercept=250, color="blue", linetype = "dashed")
+
+ggplot(alpha2)+
+  geom_point(aes(x=f_cal_current, y=div_shannon_003), size=1)+theme_classic()+xlab("Faecal calprotectin")+ylab("Shannon diversity")+
+  geom_vline(xintercept=250, color="blue", linetype = "dashed")
+```
+
+Tested using linear mixed models
+```{r warning=FALSE}
+divs <- c("spec_nr_003", "div_shannon_0032")
+
+#Within study groups: Does alpha associate with age group?:
+alpha_new <- alpha_div %>% filter(study_gr==1)
+alpha_old <- alpha_div %>% filter(study_gr==2)
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr"))
+  model1 <- lme(form, data=alpha_new, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ study_gr+age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#What is the association with disease score? Include age:
+#Should interaction with age be included?
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current*age_gr"))
+  model1 <- lme(form, data=alpha_new, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current*age_gr"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+for (div in divs){
+  form <- as.formula(paste0(div, "~ study_gr+age_gr+f_cal_current*age_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Interaction is not significant. Fit without:
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current"))
+  model1 <- lme(form, data=alpha_new, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+for (div in divs){
+  form <- as.formula(paste0(div, "~ study_gr+age_gr+f_cal_current"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+
+#Split the dataset by age group and test influence of study group:
+alpha_children <- alpha_div %>% filter(age_gr==1)
+alpha_adults <- alpha_div %>% filter(age_gr==2)
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ study_gr"))
+  model1 <- lme(form, data=alpha_children, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ study_gr"))
+  model1 <- lme(form, data=alpha_adults, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+study_gr"))
+  model1 <- lme(form, data=alpha_div, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Influence of medicine for earlier diagnosed:
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+as.factor(bio)"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+as.factor(aza)"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+as.factor(pred)"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+as.factor(asa)"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+#Also include f-cal:
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current+bio"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current+aza"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current+pred"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+
+for (div in divs){
+  form <- as.formula(paste0(div, "~ age_gr+f_cal_current+asa"))
+  model1 <- lme(form, data=alpha_old, random=~1|person_ID, na.action=na.omit, correlation=corAR1(form=~time_point|person_ID))
+  print(summary(model1)$tTable)
+}
+```
+
+# Tests of beta diversity
+Tested with PERMANOVA
+```{r}
+#Number of samples/participant must be even! Select samples with 4 data points
+ent <- subset_samples(ps_relab, !is.na(score))
+df <- data.frame(sample_data(ent))
+n_df <- df %>% group_by(person_ID) %>% summarise(n=n()) %>% filter(n>3)
+df_reduced <- df %>% filter(person_ID %in% n_df$person_ID)
+reduce <- df_reduced %>% group_by(person_ID)%>% arrange(time_point) %>% slice(1:4) %>% ungroup()
+ps_reduced <- subset_samples(ps_relab, J_ID %in% reduce$J_ID)
+
+#Divide by study group:
+ps_new <- subset_samples(ps_reduced, study_gr==1)
+ps_old <- subset_samples(ps_reduced, study_gr==2)
+
+#Test age group- newly diagnosed:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_new)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_new))~age_gr, data=as.data.frame(as.matrix(sample_data(ps_new))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_new))~age_gr, data=as.data.frame(as.matrix(sample_data(ps_new))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Test age group- previously diagnosed:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_old)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Test age group- full data set:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_reduced)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+
+#Test the influence of f-cal: Test first interaction with age:
+ps_reduced <- subset_samples(ps_reduced, !is.na(f_cal_current))
+ps_new <- subset_samples(ps_reduced, study_gr==1)
+ps_old <- subset_samples(ps_reduced, study_gr==2)
+
+#Newly diagnosed:
+perm <- how(within=Within(type="free"), plots=Plots(strata=sample_data(ps_new)$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_new))~as.numeric(f_cal_current)+age_gr, data=as.data.frame(as.matrix(sample_data(ps_new))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_new))~as.numeric(f_cal_current)+age_gr, data=as.data.frame(as.matrix(sample_data(ps_new))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Previously diagnosed:
+perm <- how(within=Within(type="free"), plots=Plots(strata=sample_data(ps_old)$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~as.numeric(f_cal_current)+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~as.numeric(f_cal_current)+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Full dataset:
+perm <- how(within=Within(type="free"), plots=Plots(strata=sample_data(ps_reduced)$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~as.numeric(f_cal_current)+age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~as.numeric(f_cal_current)+age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+
+# Divide by age group and test study group:
+ps_children <- subset_samples(ps_reduced, age_gr==1)
+ps_adults <- subset_samples(ps_reduced, age_gr==2)
+
+#Children:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_children)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_children))~study_gr, data=as.data.frame(as.matrix(sample_data(ps_children))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_children))~study_gr, data=as.data.frame(as.matrix(sample_data(ps_children))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Adults:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_adults)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_adults))~study_gr, data=as.data.frame(as.matrix(sample_data(ps_adults))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_adults))~study_gr, data=as.data.frame(as.matrix(sample_data(ps_adults))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Full dataset:
+perm <- how(within=Within(type="none"), plots=Plots(strata=sample_data(ps_reduced)$person_ID, type="free"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_reduced))~age_gr+study_gr, data=as.data.frame(as.matrix(sample_data(ps_reduced))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+#Determine the effect of medicine for patients with older diagnosis:
+perm <- how(within=Within(type="free"), plots=Plots(strata=sample_data(ps_old)$person_ID, type="none"), nperm=999)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~bio+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~bio+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~aza+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~aza+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~pred+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~pred+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~asa+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="bray", permutations=perm, by="margin")
+
+set.seed(1)
+adonis2(t(otu_table(ps_old))~asa+age_gr, data=as.data.frame(as.matrix(sample_data(ps_old))), method="jaccard", permutations=perm, by="margin", binary=T)
+```
+
+
+# Stability analysis of the microbiome across age groups and study groups
+
+Investigation of the flucturation of the microbiome. Is it depending on age group? Or on study group?
+Calculation of distance (beta diversity) between sample 1 and sample 5 from the same individual. Is this internal distance depending on the groups?
+```{r}
+#Select timepoint 1 and timepoint 5
+df <- data.frame(sample_data(ps_relab))
+df <- df %>% filter(time_point %in% c(0,4))
+n_df <- df %>% group_by(person_ID) %>% dplyr::summarise(n=n()) %>% filter(n>1) 
+t1t5 <- df %>% filter(person_ID %in% n_df$person_ID)
+ps_t1t5 <- subset_samples(ps_relab, J_ID %in% t1t5$J_ID)
+
+#Calculate beta div
+bc_meta <-  phyloseq::distance(ps_t1t5, method="bray")
+jac_meta <- phyloseq::distance(ps_t1t5, method="jaccard", binary=T)
+
+#Transform into table
+bc_meta <- as.matrix(bc_meta)
+bc_meta <- as.data.frame(bc_meta)
+jac_meta <- as.matrix(jac_meta)
+jac_meta <- as.data.frame(jac_meta)
+
+#Make new dataframe
+t1 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(1) %>% ungroup()
+t5 <- t1t5 %>% group_by(person_ID) %>% arrange(time_point) %>% slice(n()) %>% ungroup()
+
+df_dist<- tibble(person_ID=t1$person_ID, J1 = t1$J_ID, J2=t5$J_ID, dist_bc=rep(NA, nrow(t1)), dist_jac=rep(NA, nrow(t1)),age_gr= as.factor(t1$age_gr), study_gr= as.factor(t1$study_gr))
+
+df_dist <- as.data.frame(df_dist)
+for (i in 1:nrow(df_dist)){
+  df_dist[i,"dist_bc"] <- bc_meta[df_dist$J1[i], df_dist$J2[i]]
+  df_dist[i,"dist_jac"] <- jac_meta[df_dist$J1[i], df_dist$J2[i]]
+}
+
+#Make plots:
+df_dist$study_gr1 <- ifelse(df_dist$study_gr==1, "Newly diagnosed", ifelse(df_dist$study_gr==2, "Older diagnosis", NA))
+
+p1 <- ggplot(data=df_dist,aes(x=study_gr1, y=dist_bc))+
+  geom_violin(aes(color=study_gr1, fill=study_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none", text = element_text(family = "sans", size = 8))+ xlab(" ") + ylab("Bray Curtis dissimilarity")
+
+p2 <- ggplot(data=df_dist,aes(x=study_gr1, y=dist_jac))+
+  geom_violin(aes(color=study_gr1, fill=study_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none", text = element_text(family = "sans", size = 8))+ xlab(" ") + ylab("Jaccard distance")
+
+ggarrange(p1, p2)
+
+df_dist$age_gr1 <- ifelse(df_dist$age_gr==1, "Children", ifelse(df_dist$age_gr==2, "Adults", NA))
+df_dist$age_gr1 <- factor(df_dist$age_gr1, levels=c("Children", "Adults"))
+
+p3 <- ggplot(data=df_dist,aes(x=age_gr1, y=dist_bc))+
+  geom_violin(aes( color=age_gr1, fill=age_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none", text = element_text(family = "sans", size = 8))+
+  xlab(" ") + ylab("Bray Curtis dissimilarity")
+
+p4 <- ggplot(data=df_dist,aes(x=age_gr1, y=dist_jac))+
+  geom_violin(aes( color=age_gr1, fill=age_gr1))+geom_dotplot(binaxis='y', stackdir='center', dotsize=1)+theme_classic()+theme(legend.position = "none", text = element_text(family = "sans", size = 8))+
+  xlab(" ") + ylab("Jaccard distance")
+ggarrange(p3, p4)
+
+#Gather figure supp 2
+p_top <- ggarrange(p1, p2, ncol=2, labels = c("A)", "C)"), font.label = list(size=10, family="sans"), widths = c(1, 1))
+
+p_bottom <- ggarrange(p3, p4, labels=c("B)", "D)"), font.label = list(size=10, family="sans"), widths = c(1, 1))
+
+p_total <- ggarrange(p_top, p_bottom, nrow=2, heights = c(1,1))
+
+ggsave(p_total, filename = "C:/Users/FX76TZ/OneDrive - Aalborg Universitet/IBD project/V1/illustrations/Manuscript/Figure_Supp2.tiff", width = 174, height = 160, units = "mm", dpi=300)
+
+
+#Divide based on study group
+df_new <- df_dist %>% filter(study_gr == 1)
+df_old <- df_dist %>% filter(study_gr == 2)
+#Test if there is a difference using permutation ANOVA: Bray Curtis
+set.seed(1)
+res <- anova(lm(formula=dist_bc~age_gr, data=df_new))
+res
+summary(lm(formula=dist_bc~age_gr, data=df_new))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_new
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_new))
+    test_age <- as.data.frame(anova(lm(formula=dist_bc~age_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+#Jaccard:
+set.seed(1)
+res <- anova(lm(formula=dist_jac~age_gr, data=df_new))
+res
+summary(lm(formula=dist_jac~age_gr, data=df_new))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_new
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_new))
+    test_age <- as.data.frame(anova(lm(formula=dist_jac~age_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+#Repeat for ealier diagnosed:
+set.seed(1)
+res <- anova(lm(formula=dist_bc~age_gr, data=df_old))
+res
+summary(lm(formula=dist_bc~age_gr, data=df_old))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_old
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_old))
+    test_age <- as.data.frame(anova(lm(formula=dist_bc~age_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+#Jaccard:
+set.seed(1)
+res <- anova(lm(formula=dist_jac~age_gr, data=df_old))
+res
+summary(lm(formula=dist_jac~age_gr, data=df_old))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_old
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_old))
+    test_age <- as.data.frame(anova(lm(formula=dist_jac~age_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+#Repeat for the whole dataset:
+set.seed(1)
+res <- anova(lm(formula=dist_bc~age_gr+study_gr, data=df_dist))
+res
+summary(lm(formula=dist_bc~age_gr+study_gr, data=df_dist))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_dist
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_dist))
+    test_age <- as.data.frame(anova(lm(formula=dist_bc~age_gr+study_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+#Jaccard:
+set.seed(1)
+res <- anova(lm(formula=dist_jac~age_gr+study_gr, data=df_dist))
+res
+summary(lm(formula=dist_jac~age_gr+study_gr, data=df_dist))
+
+df_test_age <- rep(NA, 1000)
+for (i in 1:1000){
+    #Permute and save F-statistic: Age group
+    df_shuffle_age <- df_dist
+    df_shuffle_age$age_gr <- sample(x=df_shuffle_age$age_gr, size=nrow(df_dist))
+    test_age <- as.data.frame(anova(lm(formula=dist_jac~age_gr+study_gr, data=df_shuffle_age)))
+    df_test_age[i] <- test_age["age_gr", "F value"]
+  }
+
+#Make p-value
+res_age <- res["age_gr", "F value"]
+sum(df_test_age>=res_age)/1000
+
+```
+
